@@ -3,10 +3,13 @@ enum QaTargetMode { local, ssh }
 enum QaActivityKind { info, success, error }
 
 class QaActivityMessage {
-  const QaActivityMessage(this.title, this.body, this.kind);
+  QaActivityMessage(this.title, this.body, this.kind, {DateTime? at})
+      : at = at ?? DateTime.now();
+
   final String title;
   final String body;
   final QaActivityKind kind;
+  final DateTime at;
 }
 
 class QaProfile {
@@ -15,6 +18,7 @@ class QaProfile {
     required this.entity,
     required this.environment,
   });
+
   final String label;
   final String entity;
   final String environment;

@@ -9,6 +9,7 @@ class PenguinPosAppLauncher {
 
   Future<LaunchedPenguinPos> launch({
     required String appRoot,
+    String flutterExecutable = 'flutter',
     String? device,
     String? entity,
     String? env,
@@ -26,7 +27,7 @@ class PenguinPosAppLauncher {
     final targetEnv = env ?? Platform.environment['PENGUIN_POS_ENV'] ?? 'stage';
 
     final process = await Process.start(
-      'flutter',
+      flutterExecutable.isNotEmpty ? flutterExecutable : 'flutter',
       <String>[
         'run',
         '-d',

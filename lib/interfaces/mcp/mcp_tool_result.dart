@@ -9,7 +9,10 @@ class McpToolResult {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'isError': isError,
-    if (data != null) 'content': <Object?>[<String, Object?>{'type': 'json', 'json': data}],
+    if (data != null)
+      'content': <Object?>[
+        <String, Object?>{'type': 'json', 'json': data},
+      ],
     if (error != null) 'error': error,
   };
 }

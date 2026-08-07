@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'models.dart';
+import 'package:penguin_pos_qa_agent/core/models.dart';
 
 /// Lightweight in-memory event bus for broadcasting QA execution lifecycle events.
 class EventBus {

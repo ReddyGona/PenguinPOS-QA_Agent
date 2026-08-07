@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../result.dart';
+import 'package:penguin_pos_qa_agent/core/result.dart';
 
 /// Reports scenario execution results as indented JSON files.
 class JsonReporter {

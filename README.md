@@ -22,13 +22,23 @@ PenguinPOS QA_Agent/
 │   ├── automation/                   # 🧪 HEADLESS AUTOMATION ENGINE & CONTRACTS
 │   │   └── login/                    # Login Feature Automation
 │   │       ├── login_keys.dart       # Widget key contracts (`login.id`, `home.screen`)
-│   │       ├── login_runner.dart     # FlutterDriver test execution engine (run & runFullSequence)
+│   │       ├── login_runner.dart     # FlutterDriver test execution engine
 │   │       └── login_scenario.dart   # Scenario data payload model
 │   │
 │   ├── interfaces/                   # 🔌 ACCESS INTERFACES (Decoupled Adapters)
 │   │   ├── gui/                      # 🖥️ Desktop Flutter GUI Interface
 │   │   │   ├── app/                  # QaAgentGuiApp & ThemeData
-│   │   │   ├── dashboard/            # Dashboard Screen, Widgets, Models & Repositories
+│   │   │   ├── onboarding/           # 🚀 Onboarding & Path Configuration
+│   │   │   │   └── screens/
+│   │   │   │       └── onboarding_setup_screen.dart # 3-step setup wizard
+│   │   │   ├── dashboard/            # 📊 Dashboard Shell & Workspace
+│   │   │   │   ├── model/            # QaProfile, QaTargetMode, TestSuiteItem models
+│   │   │   │   ├── repository/       # Saved preferences repository
+│   │   │   │   ├── widgets/          # SideNav, QaPanel, QaActivityPanel
+│   │   │   │   └── screens/          # Suite Workspace Screens
+│   │   │   │       ├── qa_dashboard_screen.dart # Main dashboard shell container
+│   │   │   │       └── login/
+│   │   │   │           └── login_suite_screen.dart # Dedicated Login & Terminal test cases
 │   │   │   └── qa_agent_dashboard.dart # GUI facade export
 │   │   ├── cli/                      # 💻 Command Line Interface Adapter
 │   │   │   └── login_cli_handler.dart # CLI login parser, stdin fallback & runner
@@ -49,8 +59,14 @@ PenguinPOS QA_Agent/
 │   └── runtime/                      # ⚙️ PLATFORM INFRASTRUCTURE
 │       ├── app_launcher.dart         # Flutter process launcher (`--dart-define` flags)
 │       ├── driver_engine.dart        # Driver wrapper with step delay pacing
+│       ├── path_detector.dart        # Auto-detects Flutter SDK and PenguinPOS paths
 │       ├── qa_profile_config.dart    # Profile configurations (`ibo-stage`, `kpn-stage`, etc.)
 │       └── qa_session_manager.dart   # Session manager
+│
+├── macos/                            # 🍎 MACOS DESKTOP CONFIGURATION
+│   └── Runner/
+│       ├── DebugProfile.entitlements # Subprocess permission configuration (`app-sandbox` = false)
+│       └── Release.entitlements
 │
 ├── scenarios/                        # 📄 DECLARATIVE YAML SCENARIOS
 │   └── login/                        # Login Feature Scenarios
@@ -69,10 +85,27 @@ PenguinPOS QA_Agent/
 
 ---
 
+## 🖥️ Desktop GUI Features & Onboarding
+
+1. **3-Step Setup Wizard**:
+   - **Target & System Paths**: Choose **Local Machine** or **Remote SSH**, auto-detect system `flutter` executable and `penguin_pos` app root directory.
+   - **Environment Selection**: Pick Global QA Profile (e.g. `KPN STAGE`, `IBO STAGE`).
+   - **Test Credentials**: Enter 10-digit test login ID and password.
+
+2. **Test Suite Sidebar Workspace**:
+   - Navigation sidebar lists all test suites (*Login & Terminal*, *Checkout & Cart*, *Inventory & Stock*, *Orders & Returns*, *Payment Gateway*).
+   - Right panel displays detailed scenario breakdowns, step-by-step actions, and tags (`#smoke`, `#login`).
+
+3. **Live Play & Results**:
+   - Execute test suites directly from the GUI with the `▶ Run Suite` button.
+   - View real-time progress indicators, step execution logs, total duration, and pass/fail details on the same screen.
+
+---
+
 ## 🏃 Running Login Scenarios via CLI
 
 ```bash
-# Set PenguinPOS source directory
+# Set PenguinPOS source directory (or allow automatic detection)
 export PENGUIN_POS_ROOT="/Users/reddygona/Documents/PenguinPOS/penguin_pos"
 
 # Run complete sequential login suite (Empty -> Invalid -> Valid -> Terminal Continue -> Home Screen):
@@ -118,20 +151,8 @@ dart run bin/qa_agent.dart login \
 
 > **Tip:** Type `/mcp` in `agy` to verify server connectivity.
 
-### LLM Tool Parameters & Behavior
+---
 
-```json
-{
-  "qa_session_id": "session-12345",
-  "login_id": "9999999999",
-  "password": "my-test-password",
-  "speed": "slow",
-  "check_all_scenarios": true
-}
-```
+## 📏 Code Style Guidelines
 
-The agent executes:
-
-1. `penguin_pos_start_qa_session`: Launches app with trusted profile defaults (`ibo-stage`).
-2. `penguin_pos_login`: Fills credentials, checks empty/invalid validations, handles terminal selection continue button (`login.terminal.continue`), and verifies navigation into Home Screen (`home.screen`).
-3. `penguin_pos_stop_qa_session`: Safely closes the app instance when finished.
+- **Package Imports**: Always use absolute package imports (`import 'package:penguin_pos_qa_agent/...'`) for all project files in `lib/`. Enforced via `analysis_options.yaml` (`always_use_package_imports: true`).

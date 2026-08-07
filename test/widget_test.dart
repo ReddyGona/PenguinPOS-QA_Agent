@@ -11,8 +11,8 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const QaAgentGuiApp());
 
-    expect(find.text('Run configuration'), findsOneWidget);
-    expect(find.text('Test cases'), findsOneWidget);
-    expect(find.text('Continue to test cases'), findsOneWidget);
+    expect(find.text('PenguinPOS QA Agent Setup'), findsOneWidget);
+    expect(find.text('Local Machine'), findsOneWidget);
+    expect(find.text('Next Step'), findsOneWidget);
   });
 }

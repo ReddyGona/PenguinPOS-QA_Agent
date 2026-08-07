@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../dashboard/screens/qa_dashboard_screen.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/qa_dashboard_screen.dart';
 
 class QaAgentGuiApp extends StatelessWidget {
   const QaAgentGuiApp({super.key});

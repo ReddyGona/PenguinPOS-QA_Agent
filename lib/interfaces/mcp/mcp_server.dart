@@ -1,16 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'mcp_feature_tool.dart';
-import 'mcp_input_validator.dart';
-import 'mcp_tool_result.dart';
+import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_feature_tool.dart';
+import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_input_validator.dart';
+import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_tool_result.dart';
 
 /// Stdio JSON-RPC MCP Server implementation.
 class PenguinPosMcpServer {
   PenguinPosMcpServer({
     required List<McpFeatureTool> tools,
     McpInputValidator? validator,
-  }) : _tools = <String, McpFeatureTool>{for (final tool in tools) tool.definition.name: tool},
+  }) : _tools = <String, McpFeatureTool>{
+         for (final tool in tools) tool.definition.name: tool,
+       },
        _validator = validator ?? McpInputValidator();
 
   final Map<String, McpFeatureTool> _tools;
@@ -63,10 +65,14 @@ class PenguinPosMcpServer {
       case 'tools/call':
         final params = json['params'] as Map<String, Object?>?;
         final name = params?['name'] as String?;
-        final arguments = (params?['arguments'] as Map<String, Object?>?) ?? <String, Object?>{};
+        final arguments =
+            (params?['arguments'] as Map<String, Object?>?) ??
+            <String, Object?>{};
 
         final tool = _tools[name];
-        if (tool == null) return _errorResponse(id, -32601, 'Tool not found: $name');
+        if (tool == null) {
+          return _errorResponse(id, -32601, 'Tool not found: $name');
+        }
 
         final missing = _validator.validate(
           definition: tool.definition,
@@ -76,7 +82,9 @@ class PenguinPosMcpServer {
           return <String, Object?>{
             'jsonrpc': '2.0',
             'id': id,
-            'result': McpToolResult.failure('Missing required arguments: ${missing.join(", ")}').toJson(),
+            'result': McpToolResult.failure(
+              'Missing required arguments: ${missing.join(", ")}',
+            ).toJson(),
           };
         }
 
@@ -91,9 +99,10 @@ class PenguinPosMcpServer {
     }
   }
 
-  Map<String, Object?> _errorResponse(Object? id, int code, String message) => <String, Object?>{
-    'jsonrpc': '2.0',
-    'id': id,
-    'error': <String, Object?>{'code': code, 'message': message},
-  };
+  Map<String, Object?> _errorResponse(Object? id, int code, String message) =>
+      <String, Object?>{
+        'jsonrpc': '2.0',
+        'id': id,
+        'error': <String, Object?>{'code': code, 'message': message},
+      };
 }

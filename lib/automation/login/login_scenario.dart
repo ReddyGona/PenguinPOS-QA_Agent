@@ -1,4 +1,4 @@
-import 'login_keys.dart';
+import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 
 /// Data payload model for a login scenario execution.
 class LoginScenario {
@@ -7,6 +7,7 @@ class LoginScenario {
     required this.name,
     required this.loginId,
     required this.password,
+    this.unlockPin,
     this.terminalContinueKey = PenguinPosLoginKeys.terminalContinue,
     this.expectedKey = PenguinPosLoginKeys.homeScreen,
   });
@@ -15,6 +16,12 @@ class LoginScenario {
   final String name;
   final String loginId;
   final String password;
+
+  /// Passcode used only when the app opens with an active idle-timeout lock.
+  ///
+  /// It is intentionally optional because a fresh app can start on Login, but
+  /// no default is used when an existing session is locked.
+  final String? unlockPin;
   final String terminalContinueKey;
   final String expectedKey;
 }
