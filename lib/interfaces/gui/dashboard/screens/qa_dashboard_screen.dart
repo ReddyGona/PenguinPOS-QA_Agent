@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
+import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/ai/orchestration/ai_orchestrator.dart';
+import 'package:penguin_pos_qa_agent/ai/providers/openai_compatible_provider.dart';
+import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
 import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
 import 'package:penguin_pos_qa_agent/runtime/path_detector.dart';
-import 'package:penguin_pos_qa_agent/interfaces/gui/onboarding/screens/onboarding_setup_screen.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/repository/qa_target_preferences_repository.dart';
@@ -14,6 +17,9 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/qa_activit
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/side_nav.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/login/login_suite_screen.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/order_suite_screen.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/ai_assistant_workspace.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/qa_settings_screen.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_credential_vault.dart';
 
 /// Main Dashboard container screen managing setup state, sidebar navigation, active suite screen, and activity log matching the mockup.
 class QaDashboardScreen extends StatefulWidget {
@@ -25,12 +31,16 @@ class QaDashboardScreen extends StatefulWidget {
 
 class _QaDashboardScreenState extends State<QaDashboardScreen> {
   final _preferences = QaTargetPreferencesRepository();
+  final _credentialVault = QaCredentialVault();
 
-  bool _setupCompleted = false;
+  bool _preferencesLoaded = false;
+  bool _showFirstRunSetupPrompt = false;
+  bool _showSettingsScreen = false;
 
-  QaTargetMode _targetMode = QaTargetMode.local;
+  final QaTargetMode _targetMode = QaTargetMode.local;
   String _flutterPath = 'flutter';
   String _appRoot = '/Users/reddygona/Documents/PenguinPOS/penguin_pos';
+  List<QaProfile> _profiles = QaProfile.values;
   QaProfile _profile = QaProfile.values.first;
   String _loginId = '';
   String _password = '';
@@ -40,6 +50,10 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
   String _selectedSuiteId = 'login_terminal';
   OrderScenario _orderScenario = OrderScenario.sampleScenario;
+  // The assistant is the product's default entry experience. Manual mode is
+  // still one click away, but is not restored as the startup destination.
+  bool _aiModeEnabled = true;
+  AiModelConfig _aiModelConfig = const AiModelConfig();
 
   bool _running = false;
   bool _stopRequested = false;
@@ -51,10 +65,18 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   List<String> _scenariosCompletedSoFar = <String>[];
   OrderRunResult? _lastOrderRunResult;
 
+  // Layer 3: Live execution progress tracking for the AI workspace.
+  final _executionSteps = <AiExecutionStep>[];
+  String _executionSuiteTitle = '';
+  String _executionProfileLabel = '';
+  final _executionStopwatch = Stopwatch();
+  final GlobalKey<_AiAssistantWorkspaceHostState> _workspaceKey =
+      GlobalKey<_AiAssistantWorkspaceHostState>();
+
   final _messages = <QaActivityMessage>[
     QaActivityMessage(
       'Ready',
-      'Complete onboarding setup to unlock the workspace.',
+      'QA Assistant is ready. Configure a reusable profile in Settings when needed.',
       QaActivityKind.info,
     ),
   ];
@@ -67,213 +89,144 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
   Future<void> _loadSavedTargetPreferences() async {
     final target = await _preferences.loadSshTarget();
-    final detectedFlutter = await PathDetector.detectFlutterPath();
-    final detectedAppRoot = await PathDetector.detectAppRoot();
+    final profiles = await _preferences.loadProfiles();
+    final selectedProfileId = await _preferences.loadSelectedProfileId();
+    var hasCompletedInitialSetup = await _preferences
+        .hasCompletedInitialSetup();
+    final aiModelConfig = await _preferences.loadAiModelConfig();
+    final selectedProfile = profiles.firstWhere(
+      (profile) => profile.id == selectedProfileId,
+      orElse: () => profiles.first,
+    );
+    final credentials = await _credentialVault.read(selectedProfile.id);
+    // Existing users configured before this preference was introduced should
+    // not see first-run setup again simply because the marker is new.
+    if (!hasCompletedInitialSetup &&
+        selectedProfileId != null &&
+        (credentials.loginId.isNotEmpty ||
+            credentials.password.isNotEmpty ||
+            credentials.unlockPin.isNotEmpty)) {
+      await _preferences.markInitialSetupComplete();
+      hasCompletedInitialSetup = true;
+    }
 
     if (!mounted) return;
     setState(() {
       _sshUser = target.username;
       _sshHost = target.host;
-      _flutterPath = detectedFlutter;
-      _appRoot = detectedAppRoot;
+      _profiles = profiles;
+      _profile = selectedProfile;
+      _loginId = credentials.loginId;
+      _password = credentials.password;
+      _unlockPin = credentials.unlockPin;
+      _aiModelConfig = aiModelConfig;
+      _preferencesLoaded = true;
+      _showFirstRunSetupPrompt = !hasCompletedInitialSetup;
     });
+    if (!hasCompletedInitialSetup) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _showFirstRunSetupPrompt) {
+          _openFirstRunSetupDialog();
+        }
+      });
+    }
+    _refreshDetectedPaths();
   }
 
-  void _onSetupComplete({
-    required QaTargetMode targetMode,
-    required String flutterPath,
-    required String appRoot,
-    required QaProfile profile,
-    required String loginId,
-    required String password,
-    required String unlockPin,
-    required String sshUser,
-    required String sshHost,
-  }) async {
+  /// Path checks touch the local file system and must not delay the first AI
+  /// screen. The runner receives the detected values before it is invoked.
+  Future<void> _refreshDetectedPaths() async {
+    final flutterPath = await PathDetector.detectFlutterPath();
+    final appRoot = await PathDetector.detectAppRoot();
+    if (!mounted) return;
     setState(() {
-      _targetMode = targetMode;
       _flutterPath = flutterPath;
       _appRoot = appRoot;
-      _profile = profile;
-      _loginId = loginId;
-      _password = password;
-      _unlockPin = unlockPin;
-      _sshUser = sshUser;
-      _sshHost = sshHost;
-      _setupCompleted = true;
     });
-
-    if (sshUser.isNotEmpty || sshHost.isNotEmpty) {
-      await _preferences.saveSshTarget(
-        QaSshTarget(username: sshUser, host: sshHost),
-      );
-    }
-
-    _addMessage(
-      'Setup Configured',
-      'Target: ${targetMode == QaTargetMode.local ? "Local Machine" : "SSH ($sshUser@$sshHost)"} · Profile: ${profile.label}',
-      QaActivityKind.success,
-    );
   }
 
-  void _openEditCredentialsDialog() {
-    final loginController = TextEditingController(text: _loginId);
-    final passwordController = TextEditingController(text: _password);
-    final unlockPinController = TextEditingController(text: _unlockPin);
-    QaProfile tempProfile = _profile;
+  Future<void> _selectProfile(QaProfile profile) async {
+    final credentials = await _credentialVault.read(profile.id);
+    if (!mounted) return;
+    setState(() {
+      _profile = profile;
+      _loginId = credentials.loginId;
+      _password = credentials.password;
+      _unlockPin = credentials.unlockPin;
+    });
+    await _preferences.saveSelectedProfileId(profile.id);
+  }
 
+  Future<void> _setAiModeEnabled(bool enabled) async {
+    setState(() => _aiModeEnabled = enabled);
+    await _preferences.saveAiModeEnabled(enabled);
+  }
+
+  void _openFirstRunSetupDialog() {
     showDialog<void>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Row(
-            children: <Widget>[
-              Icon(Icons.key_rounded, color: Color(0xFF155EEF)),
-              SizedBox(width: 10),
-              Text('Credentials & Environment'),
-            ],
-          ),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                const Text(
-                  'Target Profile / Environment',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<QaProfile>(
-                  initialValue: tempProfile,
-                  isDense: true,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                  ),
-                  items: QaProfile.values
-                      .map(
-                        (p) => DropdownMenuItem(value: p, child: Text(p.label)),
-                      )
-                      .toList(),
-                  onChanged: (val) {
-                    if (val != null) setDialogState(() => tempProfile = val);
-                  },
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Test Login ID (10-digits)',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: loginController,
-                  decoration: const InputDecoration(
-                    hintText: 'e.g. 8888888888',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Test Password',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    hintText: 'Enter password',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Terminal Unlock PIN',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: unlockPinController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    hintText: 'e.g. 1234 or 1359',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        title: const Row(
+          children: <Widget>[
+            Icon(
+              Icons.auto_awesome_rounded,
+              color: Color(0xFF7C3AED),
+              size: 20,
             ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF155EEF),
-                foregroundColor: Colors.white,
+            SizedBox(width: 10),
+            Text(
+              'Welcome to QA Assistant',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF0F172A),
               ),
-              onPressed: () {
-                setState(() {
-                  _profile = tempProfile;
-                  _loginId = loginController.text.trim();
-                  _password = passwordController.text;
-                  _unlockPin = unlockPinController.text.trim();
-                });
-                Navigator.pop(dialogContext);
-                _addMessage(
-                  'Credentials Updated',
-                  'Profile: ${tempProfile.label} · Login ID: ${_loginId.isEmpty ? "(Prompt)" : _loginId}',
-                  QaActivityKind.info,
-                );
-              },
-              child: const Text('Save Credentials'),
             ),
           ],
         ),
+        content: const SizedBox(
+          width: 410,
+          child: Text(
+            'Reusable environment, credentials/PIN, and optional local/cloud model are configured in Settings.',
+            style: TextStyle(
+              height: 1.5,
+              fontSize: 13.5,
+              color: Color(0xFF475569),
+            ),
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+        actions: <Widget>[
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF7C3AED),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _openSettingsDialog();
+            },
+            icon: const Icon(Icons.settings_outlined, size: 16),
+            label: const Text(
+              'Open Settings',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   void _openSettingsDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Row(
-          children: <Widget>[
-            Icon(Icons.settings_outlined, color: Color(0xFF155EEF)),
-            SizedBox(width: 10),
-            Text('QA Agent Settings'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              'Flutter Path: $_flutterPath',
-              style: const TextStyle(fontSize: 12),
-            ),
-            const SizedBox(height: 6),
-            Text('App Root: $_appRoot', style: const TextStyle(fontSize: 12)),
-            const SizedBox(height: 6),
-            const Text(
-              'Execution Engine: FlutterDriver / VM Service',
-              style: TextStyle(fontSize: 12),
-            ),
-          ],
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
+    setState(() => _showSettingsScreen = true);
   }
 
   void _openSupportDialog() {
@@ -325,15 +278,146 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   }
 
   void _recordCompletedScenario(String scenarioName) {
-    if (!mounted || _scenariosCompletedSoFar.contains(scenarioName)) return;
-    setState(() => _scenariosCompletedSoFar.add(scenarioName));
+    if (!mounted) return;
+    setState(() {
+      if (!_scenariosCompletedSoFar.contains(scenarioName)) {
+        _scenariosCompletedSoFar.add(scenarioName);
+      }
+      final activeSuite = TestSuiteItem.availableSuites.firstWhere(
+        (s) => s.id == _selectedSuiteId,
+        orElse: () => TestSuiteItem.availableSuites.first,
+      );
+      final totalScenarios = activeSuite.scenarios.length;
+
+      // Update or add the completed step
+      final existingIdx = _executionSteps.indexWhere(
+        (s) => s.scenarioName == scenarioName,
+      );
+      final step = AiExecutionStep(
+        scenarioName: scenarioName,
+        status: AiScenarioStatus.passed,
+        elapsedMs: _executionStopwatch.elapsedMilliseconds,
+        totalScenarios: totalScenarios,
+        completedScenarios: _scenariosCompletedSoFar.length,
+      );
+      if (existingIdx >= 0) {
+        _executionSteps[existingIdx] = step;
+      } else {
+        _executionSteps.add(step);
+      }
+    });
+  }
+
+  void _recordExecutionEvent(ExecutionEvent event) {
+    _addMessage(event.title, event.message, switch (event.level) {
+      ExecutionEventLevel.success => QaActivityKind.success,
+      ExecutionEventLevel.error => QaActivityKind.error,
+      ExecutionEventLevel.info => QaActivityKind.info,
+    });
+
+    // Update detail message on an existing matching scenario step if visible
+    if (mounted) {
+      final idx = _executionSteps.indexWhere(
+        (s) => s.scenarioName == event.title,
+      );
+      if (idx >= 0 && _executionSteps[idx].status == AiScenarioStatus.pending) {
+        setState(() {
+          _executionSteps[idx] = AiExecutionStep(
+            scenarioName: event.title,
+            status: AiScenarioStatus.running,
+            detail: event.message,
+            totalScenarios: _executionSteps[idx].totalScenarios,
+            completedScenarios: _scenariosCompletedSoFar.length,
+          );
+        });
+      }
+    }
   }
 
   String _interruptionDetails({required bool wasStopped}) => wasStopped
       ? 'Test stopped by the user. Completed test cases are retained; remaining cases are pending.'
       : 'PenguinPOS was quit during testing. Completed test cases are retained; remaining cases are pending.';
 
+  Future<AiAssistantResponse> _respondToAi(
+    String input,
+    List<AiChatMessage> history,
+    AiModelEventCallback onEvent,
+  ) async {
+    final apiKey = await _credentialVault.readAiApiKey();
+    final provider = _aiModelConfig.isConfigured
+        ? OpenAiCompatibleProvider(config: _aiModelConfig, apiKey: apiKey)
+        : null;
+    return AiOrchestrator(
+      profiles: _profiles,
+      provider: provider,
+    ).respond(input: input, history: history, onEvent: onEvent);
+  }
+
+  Future<void> _runAiPlan(AiTestPlan plan) async {
+    final profile = _profiles.firstWhere(
+      (candidate) => candidate.id == plan.profileId,
+      orElse: () =>
+          const QaProfile(id: '', label: '', entity: '', environment: ''),
+    );
+    if (profile.id.isEmpty) {
+      _addMessage(
+        'Execution Blocked',
+        'The selected target profile is no longer configured. Choose an approved non-production profile and try again.',
+        QaActivityKind.error,
+      );
+      return;
+    }
+    if (profile.isProduction) {
+      _addMessage(
+        'Execution Blocked',
+        'Production environments are strictly prohibited for QA Agent execution.',
+        QaActivityKind.error,
+      );
+      return;
+    }
+    final credentials = await _credentialVault.read(profile.id);
+    if (credentials.loginId.isEmpty || credentials.password.isEmpty) {
+      _addMessage(
+        'Credentials Required',
+        'Save the login ID and password for ${profile.label} in Settings → Credentials before running this plan.',
+        QaActivityKind.error,
+      );
+      return;
+    }
+
+    setState(() {
+      _profile = profile;
+      _loginId = credentials.loginId;
+      _password = credentials.password;
+      _unlockPin = credentials.unlockPin;
+      _selectedSuiteId = plan.isOrder ? 'order_checkout' : 'login_terminal';
+      if (plan.isOrder) {
+        _orderScenario = OrderScenario(
+          id: 'ai_${profile.id}_order_cash',
+          name: 'AI planned Order & Cash Payment',
+          items: plan.items,
+          ordersCount: plan.ordersCount,
+          inputSourceMode: InputSourceMode.uiForm,
+          uiCustomMode: plan.itemStrategy == AiItemStrategy.perOrder
+              ? UiCustomMode.perIteration
+              : UiCustomMode.common,
+          perIterationItems: plan.perIterationItems,
+        );
+      }
+    });
+    await _preferences.saveSelectedProfileId(profile.id);
+    await _runSelectedSuite();
+  }
+
   Future<void> _runSelectedSuite() async {
+    if (_profile.isProduction) {
+      _addMessage(
+        'Execution Blocked',
+        'Production environments are strictly prohibited for QA Agent execution.',
+        QaActivityKind.error,
+      );
+      return;
+    }
     final currentSuite = TestSuiteItem.availableSuites.firstWhere(
       (s) => s.id == _selectedSuiteId,
       orElse: () => TestSuiteItem.availableSuites.first,
@@ -369,6 +453,12 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       return;
     }
 
+    // Layer 3: prepare execution tracking state
+    final activeSuite = TestSuiteItem.availableSuites.firstWhere(
+      (s) => s.id == _selectedSuiteId,
+      orElse: () => TestSuiteItem.availableSuites.first,
+    );
+
     setState(() {
       _running = true;
       _lastExecutionPassed = null;
@@ -376,7 +466,25 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _wasAppClosedByUser = false;
       _stopRequested = false;
       _scenariosCompletedSoFar = <String>[];
+      _executionSteps.clear();
+      _executionSuiteTitle = activeSuite.title;
+      _executionProfileLabel = _profile.label;
+
+      // Seed pending steps for all scenarios
+      for (final scenario in activeSuite.scenarios) {
+        _executionSteps.add(
+          AiExecutionStep(
+            scenarioName: scenario.name,
+            status: AiScenarioStatus.pending,
+            totalScenarios: activeSuite.scenarios.length,
+            completedScenarios: 0,
+          ),
+        );
+      }
     });
+    _executionStopwatch
+      ..reset()
+      ..start();
 
     _addMessage(
       'Processing Suite',
@@ -439,6 +547,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
               QaActivityKind.info,
             );
           },
+          onExecutionEvent: _recordExecutionEvent,
         );
 
         stopwatch.stop();
@@ -488,6 +597,8 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
             unlockPin: _unlockPin,
           ),
           vmServiceUri: launched.vmServiceUri,
+          onExecutionEvent: _recordExecutionEvent,
+          onScenarioCompleted: _recordCompletedScenario,
         );
 
         stopwatch.stop();
@@ -553,10 +664,97 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         await launched?.close();
       } catch (_) {}
       if (identical(_activeLaunch, launched)) _activeLaunch = null;
+      _executionStopwatch.stop();
       if (mounted) {
-        setState(() => _running = false);
+        setState(() {
+          _running = false;
+        });
+
+        // Layer 3: Auto-inject a rich test report message into the chat
+        if (_aiModeEnabled && _lastExecutionPassed != null) {
+          final scenarioResults = <AiScenarioResult>[];
+          final suiteScenarios = activeSuite.scenarios;
+          for (final scenario in suiteScenarios) {
+            final passed = _scenariosCompletedSoFar.contains(scenario.name);
+            scenarioResults.add(
+              AiScenarioResult(
+                name: scenario.name,
+                passed: passed,
+                durationMs: passed
+                    ? (stopwatch.elapsedMilliseconds ~/ suiteScenarios.length)
+                    : 0,
+              ),
+            );
+          }
+
+          final AiRichContent reportContent;
+          final orderResult = _lastOrderRunResult;
+          if (_selectedSuiteId == 'order_checkout' && orderResult != null) {
+            reportContent = AiRichOrderReport(
+              suiteTitle: _executionSuiteTitle,
+              profileLabel: _executionProfileLabel,
+              passed: _lastExecutionPassed!,
+              totalDurationMs: stopwatch.elapsedMilliseconds,
+              orders: _buildAiOrderResults(orderResult),
+              testChecks: scenarioResults,
+            );
+          } else {
+            reportContent = AiRichTestReport(
+              suiteTitle: _executionSuiteTitle,
+              profileLabel: _executionProfileLabel,
+              passed: _lastExecutionPassed!,
+              totalDurationMs: stopwatch.elapsedMilliseconds,
+              scenarioResults: scenarioResults,
+            );
+          }
+
+          final reportMessage = AiChatMessage(
+            role: AiChatRole.assistant,
+            text: _lastExecutionPassed!
+                ? 'Test suite completed successfully.'
+                : 'Test suite finished with failures.',
+            richContent: reportContent,
+          );
+          _workspaceKey.currentState?.addRichMessage(reportMessage);
+        }
+
+        // Clear temporary execution steps so floating tracker box disappears
+        setState(() {
+          _executionSteps.clear();
+        });
       }
     }
+  }
+
+  List<AiOrderResult> _buildAiOrderResults(OrderRunResult result) {
+    return List<AiOrderResult>.generate(result.ordersTarget, (index) {
+      final orderNumber = index + 1;
+      OrderLoopMetrics? metric;
+      for (final candidate in result.loopMetrics) {
+        if (candidate.loopIndex == orderNumber) {
+          metric = candidate;
+          break;
+        }
+      }
+      final items = _orderScenario.getItemsForIteration(orderNumber);
+      final itemSummary = items
+          .map((item) {
+            final type = item.isWeighed
+                ? 'weighed${item.weight == null ? '' : ' ${item.weight} kg'}'
+                : item.type.name;
+            return 'SKU ${item.skuCode} · $type · ${item.entryMode.name}';
+          })
+          .join('\n');
+      return AiOrderResult(
+        orderNumber: orderNumber,
+        itemSummary: itemSummary.isEmpty
+            ? 'No item details recorded'
+            : itemSummary,
+        passed: metric != null,
+        durationMs: metric?.durationMs ?? 0,
+        cashAmount: metric?.payableCash ?? 0,
+      );
+    });
   }
 
   void _addMessage(String title, String body, QaActivityKind kind) {
@@ -567,16 +765,38 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_setupCompleted) {
-      return OnboardingSetupScreen(
-        initialTargetMode: _targetMode,
-        initialFlutterPath: _flutterPath,
-        initialAppRoot: _appRoot,
-        initialProfile: _profile,
-        initialLoginId: _loginId,
-        initialPassword: _password,
-        initialUnlockPin: _unlockPin,
-        onComplete: _onSetupComplete,
+    if (!_preferencesLoaded) {
+      return const Scaffold(
+        backgroundColor: Color(0xFFFCFCFD),
+        body: Center(
+          child: SizedBox(
+            height: 22,
+            width: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    if (_showSettingsScreen) {
+      return QaSettingsScreen(
+        profiles: _profiles,
+        activeProfile: _profile,
+        aiModelConfig: _aiModelConfig,
+        flutterPath: _flutterPath,
+        appRoot: _appRoot,
+        onProfileSelected: (profile) {
+          _selectProfile(profile);
+        },
+        onProfilesUpdated: (profiles) {
+          setState(() => _profiles = profiles);
+        },
+        onAiModelConfigUpdated: (config) {
+          setState(() => _aiModelConfig = config);
+        },
+        onClose: () {
+          setState(() => _showSettingsScreen = false);
+        },
       );
     }
 
@@ -586,100 +806,324 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
-      body: Row(
-        children: <Widget>[
-          // Left Sidebar
-          SideNav(
-            suites: TestSuiteItem.availableSuites,
-            selectedSuiteId: _selectedSuiteId,
-            onSelectSuite: (id) {
-              setState(() {
-                _selectedSuiteId = id;
-                _lastExecutionPassed = null;
-                _wasAppClosedByUser = false;
-                _lastExecutionDetails = null;
-                _scenariosCompletedSoFar = <String>[];
-              });
-            },
-            onOpenSetup: () {
-              setState(() => _setupCompleted = false);
-            },
-            onOpenEditCredentials: _openEditCredentialsDialog,
-            onNewSuite: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Custom suite builder is planned for upcoming release.',
+      backgroundColor: _aiModeEnabled
+          ? const Color(0xFFFCFCFD)
+          : const Color(0xFFF1F5F9),
+      body: _aiModeEnabled
+          ? _AiAssistantWorkspaceHost(
+              key: _workspaceKey,
+              profiles: _profiles,
+              activeProfile: _profile,
+              modelConfigured: _aiModelConfig.isConfigured,
+              running: _running,
+              activityMessages: _messages,
+              executionSteps: _executionSteps,
+              executionSuiteTitle: _executionSuiteTitle,
+              executionProfileLabel: _executionProfileLabel,
+              onSend: _respondToAi,
+              onRunPlan: _runAiPlan,
+              onOpenSettings: _openSettingsDialog,
+              onExitAiMode: () => _setAiModeEnabled(false),
+            )
+          : Row(
+              children: <Widget>[
+                // Left Sidebar
+                SideNav(
+                  suites: TestSuiteItem.availableSuites,
+                  selectedSuiteId: _selectedSuiteId,
+                  onSelectSuite: (id) {
+                    setState(() {
+                      _selectedSuiteId = id;
+                      _lastExecutionPassed = null;
+                      _wasAppClosedByUser = false;
+                      _lastExecutionDetails = null;
+                      _scenariosCompletedSoFar = <String>[];
+                    });
+                  },
+                  onNewSuite: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Custom suite builder is planned for upcoming release.',
+                        ),
+                      ),
+                    );
+                  },
+                  onOpenSettings: _openSettingsDialog,
+                  onOpenSupport: _openSupportDialog,
+                  activeProfileLabel: _profile.label,
+                  targetMode: _targetMode,
+                ),
+
+                // Main Active Test Suite Workspace
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      children: <Widget>[
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(0xFFE2E8F0),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                const Text(
+                                  'Environment:',
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF475569),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                SizedBox(
+                                  width: 170,
+                                  child: DropdownButtonFormField<QaProfile>(
+                                    initialValue: _profile,
+                                    isDense: true,
+                                    decoration: InputDecoration(
+                                      isDense: true,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
+                                          ),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(6),
+                                        borderSide: const BorderSide(
+                                          color: Color(0xFFCBD5E1),
+                                        ),
+                                      ),
+                                    ),
+                                    items: _profiles
+                                        .map(
+                                          (profile) =>
+                                              DropdownMenuItem<QaProfile>(
+                                                value: profile,
+                                                child: Text(
+                                                  profile.label,
+                                                  style: const TextStyle(
+                                                    fontSize: 12.5,
+                                                  ),
+                                                ),
+                                              ),
+                                        )
+                                        .toList(),
+                                    onChanged: _running
+                                        ? null
+                                        : (profile) {
+                                            if (profile != null) {
+                                              _selectProfile(profile);
+                                            }
+                                          },
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                TextButton.icon(
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: const Color(0xFF475569),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                  ),
+                                  onPressed: _openSettingsDialog,
+                                  icon: const Icon(
+                                    Icons.settings_outlined,
+                                    size: 16,
+                                  ),
+                                  label: const Text(
+                                    'Settings',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                const VerticalDivider(
+                                  width: 1,
+                                  indent: 4,
+                                  endIndent: 4,
+                                  color: Color(0xFFE2E8F0),
+                                ),
+                                const SizedBox(width: 8),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: <Widget>[
+                                    const Text(
+                                      'Manual',
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF0F172A),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Switch.adaptive(
+                                      value: false,
+                                      onChanged: _running
+                                          ? null
+                                          : _setAiModeEnabled,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Text(
+                                      'AI',
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          child: _selectedSuiteId == 'order_checkout'
+                              ? OrderSuiteScreen(
+                                  suite: activeSuite,
+                                  currentProfile: _profile,
+                                  targetMode: _targetMode,
+                                  flutterPath: _flutterPath,
+                                  appRoot: _appRoot,
+                                  running: _running,
+                                  lastExecutionPassed: _lastExecutionPassed,
+                                  lastExecutionDuration: _lastExecutionDuration,
+                                  lastExecutionDetails: _lastExecutionDetails,
+                                  wasAppClosedByUser: _wasAppClosedByUser,
+                                  scenariosCompleted: _scenariosCompletedSoFar,
+                                  orderScenario: _orderScenario,
+                                  lastOrderRunResult: _lastOrderRunResult,
+                                  onUpdateScenario: (updated) {
+                                    setState(() => _orderScenario = updated);
+                                  },
+                                  onRunSuite: _runSelectedSuite,
+                                  onStopSuite: _stopRunningSuite,
+                                )
+                              : LoginSuiteScreen(
+                                  suite: activeSuite,
+                                  currentProfile: _profile,
+                                  loginId: _loginId,
+                                  password: _password,
+                                  targetMode: _targetMode,
+                                  flutterPath: _flutterPath,
+                                  appRoot: _appRoot,
+                                  running: _running,
+                                  lastExecutionPassed: _lastExecutionPassed,
+                                  lastExecutionDuration: _lastExecutionDuration,
+                                  lastExecutionDetails: _lastExecutionDetails,
+                                  wasAppClosedByUser: _wasAppClosedByUser,
+                                  scenariosCompleted: _scenariosCompletedSoFar,
+                                  onLoginIdChanged: (id) =>
+                                      setState(() => _loginId = id),
+                                  onPasswordChanged: (pass) =>
+                                      setState(() => _password = pass),
+                                  onRunSuite: _runSelectedSuite,
+                                  onStopSuite: _stopRunningSuite,
+                                ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              );
-            },
-            onOpenSettings: _openSettingsDialog,
-            onOpenSupport: _openSupportDialog,
-            activeProfileLabel: _profile.label,
-            targetMode: _targetMode,
-          ),
 
-          // Main Active Test Suite Workspace
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: _selectedSuiteId == 'order_checkout'
-                  ? OrderSuiteScreen(
-                      suite: activeSuite,
-                      currentProfile: _profile,
-                      targetMode: _targetMode,
-                      flutterPath: _flutterPath,
-                      appRoot: _appRoot,
-                      running: _running,
-                      lastExecutionPassed: _lastExecutionPassed,
-                      lastExecutionDuration: _lastExecutionDuration,
-                      lastExecutionDetails: _lastExecutionDetails,
-                      wasAppClosedByUser: _wasAppClosedByUser,
-                      scenariosCompleted: _scenariosCompletedSoFar,
-                      orderScenario: _orderScenario,
-                      lastOrderRunResult: _lastOrderRunResult,
-                      onUpdateScenario: (updated) {
-                        setState(() => _orderScenario = updated);
-                      },
-                      onRunSuite: _runSelectedSuite,
-                      onStopSuite: _stopRunningSuite,
-                    )
-                  : LoginSuiteScreen(
-                      suite: activeSuite,
-                      currentProfile: _profile,
-                      loginId: _loginId,
-                      password: _password,
-                      targetMode: _targetMode,
-                      flutterPath: _flutterPath,
-                      appRoot: _appRoot,
-                      running: _running,
-                      lastExecutionPassed: _lastExecutionPassed,
-                      lastExecutionDuration: _lastExecutionDuration,
-                      lastExecutionDetails: _lastExecutionDetails,
-                      wasAppClosedByUser: _wasAppClosedByUser,
-                      scenariosCompleted: _scenariosCompletedSoFar,
-                      onProfileChanged: (p) => setState(() => _profile = p),
-                      onLoginIdChanged: (id) => setState(() => _loginId = id),
-                      onPasswordChanged: (pass) =>
-                          setState(() => _password = pass),
-                      onRunSuite: _runSelectedSuite,
-                      onStopSuite: _stopRunningSuite,
-                    ),
+                // Right Activity Stepper Panel
+                SizedBox(
+                  width: 320,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(0, 20, 20, 20),
+                    child: QaActivityPanel(messages: _messages),
+                  ),
+                ),
+              ],
             ),
-          ),
+    );
+  }
+}
 
-          // Right Activity Stepper Panel
-          SizedBox(
-            width: 320,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(0, 20, 20, 20),
-              child: QaActivityPanel(messages: _messages),
-            ),
-          ),
-        ],
-      ),
+// ---------------------------------------------------------------------------
+// Wrapper that holds a GlobalKey-accessible reference to the workspace's
+// internal message list so the dashboard can inject rich report messages.
+// ---------------------------------------------------------------------------
+
+class _AiAssistantWorkspaceHost extends StatefulWidget {
+  const _AiAssistantWorkspaceHost({
+    super.key,
+    required this.profiles,
+    required this.activeProfile,
+    required this.modelConfigured,
+    required this.running,
+    required this.activityMessages,
+    required this.executionSteps,
+    required this.executionSuiteTitle,
+    required this.executionProfileLabel,
+    required this.onSend,
+    required this.onRunPlan,
+    required this.onOpenSettings,
+    required this.onExitAiMode,
+  });
+
+  final List<QaProfile> profiles;
+  final QaProfile activeProfile;
+  final bool modelConfigured;
+  final bool running;
+  final List<QaActivityMessage> activityMessages;
+  final List<AiExecutionStep> executionSteps;
+  final String executionSuiteTitle;
+  final String executionProfileLabel;
+  final Future<AiAssistantResponse> Function(
+    String input,
+    List<AiChatMessage> history,
+    AiModelEventCallback onEvent,
+  )
+  onSend;
+  final ValueChanged<AiTestPlan> onRunPlan;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onExitAiMode;
+
+  @override
+  State<_AiAssistantWorkspaceHost> createState() =>
+      _AiAssistantWorkspaceHostState();
+}
+
+class _AiAssistantWorkspaceHostState extends State<_AiAssistantWorkspaceHost> {
+  void Function(AiChatMessage message)? _addRichMessageFn;
+
+  void addRichMessage(AiChatMessage message) {
+    _addRichMessageFn?.call(message);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AiAssistantWorkspace(
+      profiles: widget.profiles,
+      activeProfile: widget.activeProfile,
+      modelConfigured: widget.modelConfigured,
+      running: widget.running,
+      activityMessages: widget.activityMessages,
+      executionSteps: widget.executionSteps,
+      executionSuiteTitle: widget.executionSuiteTitle,
+      executionProfileLabel: widget.executionProfileLabel,
+      onSend: widget.onSend,
+      onRunPlan: widget.onRunPlan,
+      onOpenSettings: widget.onOpenSettings,
+      onExitAiMode: widget.onExitAiMode,
+      onRegisterAddMessage: (fn) => _addRichMessageFn = fn,
     );
   }
 }

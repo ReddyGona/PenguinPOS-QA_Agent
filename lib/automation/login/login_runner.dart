@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
@@ -140,14 +141,26 @@ class PenguinPosLoginRunner {
     ExecutionSpeed speed = const ExecutionSpeed(),
     Duration timeout = const Duration(seconds: 45),
     DriverEngine? driverEngine,
+    void Function(ExecutionEvent event)? onExecutionEvent,
+    void Function(String scenarioName)? onScenarioCompleted,
   }) async {
     final startedAt = DateTime.now();
     final engine = driverEngine ?? DriverEngine();
     final delay = speed.delay;
     final executed = <String>[];
+    void emit(
+      String title,
+      String message, {
+      ExecutionEventLevel level = ExecutionEventLevel.info,
+    }) {
+      onExecutionEvent?.call(
+        ExecutionEvent(title: title, message: message, level: level),
+      );
+    }
 
     try {
       await engine.connect(vmServiceUri, timeout: timeout);
+      emit('Driver Connected', 'Connected to PenguinPOS Flutter Driver.');
 
       await _ensureLoggedOut(
         engine,
@@ -155,6 +168,7 @@ class PenguinPosLoginRunner {
         timeout: timeout,
         delay: delay,
       );
+      emit('Session Reset', 'Login screen is ready for validation.');
 
       // Phase 1: Empty credentials submit validation check
       await engine.waitFor(
@@ -169,6 +183,8 @@ class PenguinPosLoginRunner {
         delay: delay,
       );
       executed.add('Login Validation');
+      onScenarioCompleted?.call('Login Validation');
+      emit('Login Validation', 'Empty credential validation completed.');
 
       // Phase 2: Invalid credentials submit authentication check
       await engine.enterText(
@@ -188,6 +204,11 @@ class PenguinPosLoginRunner {
         delay: delay,
       );
       executed.add('Auth Failure Handling');
+      onScenarioCompleted?.call('Auth Failure Handling');
+      emit(
+        'Invalid Credentials Check',
+        'Authentication failure handling completed.',
+      );
 
       // Phase 3: Valid credentials submit
       await engine.enterText(
@@ -217,12 +238,19 @@ class PenguinPosLoginRunner {
         delay: delay,
       );
       executed.add('Valid Login Flow');
+      onScenarioCompleted?.call('Valid Login Flow');
+      emit('Valid Login', 'Terminal selection completed and Home is visible.');
 
       await _ensureLoggedOut(
         engine,
         unlockPin: scenario.unlockPin,
         timeout: timeout,
         delay: delay,
+      );
+      emit(
+        'Logout Completed',
+        'Returned to Login screen.',
+        level: ExecutionEventLevel.success,
       );
 
       return LoginRunResult(
@@ -235,6 +263,7 @@ class PenguinPosLoginRunner {
       );
     } catch (error) {
       final errorStr = error.toString();
+      emit('Login Suite Error', errorStr, level: ExecutionEventLevel.error);
       final isAppClosed =
           errorStr.contains('Service has disappeared') ||
           errorStr.contains('112') ||
