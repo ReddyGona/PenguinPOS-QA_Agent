@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
+import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
+import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
 import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
 import 'package:penguin_pos_qa_agent/runtime/path_detector.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/onboarding/screens/onboarding_setup_screen.dart';
@@ -11,6 +13,7 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/repository/qa_targ
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/qa_activity_panel.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/side_nav.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/login/login_suite_screen.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/order_suite_screen.dart';
 
 /// Main Dashboard container screen managing setup state, sidebar navigation, active suite screen, and activity log matching the mockup.
 class QaDashboardScreen extends StatefulWidget {
@@ -36,13 +39,17 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   String _sshHost = '';
 
   String _selectedSuiteId = 'login_terminal';
+  OrderScenario _orderScenario = OrderScenario.sampleScenario;
 
   bool _running = false;
+  bool _stopRequested = false;
+  LaunchedPenguinPos? _activeLaunch;
   Duration? _lastExecutionDuration;
   bool? _lastExecutionPassed;
   String? _lastExecutionDetails;
   bool _wasAppClosedByUser = false;
   List<String> _scenariosCompletedSoFar = <String>[];
+  OrderRunResult? _lastOrderRunResult;
 
   final _messages = <QaActivityMessage>[
     QaActivityMessage(
@@ -160,11 +167,10 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
                 const SizedBox(height: 6),
                 TextField(
                   controller: loginController,
-                  keyboardType: TextInputType.number,
-                  maxLength: 10,
                   decoration: const InputDecoration(
+                    hintText: 'e.g. 8888888888',
+                    isDense: true,
                     border: OutlineInputBorder(),
-                    counterText: '',
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -177,22 +183,23 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
                   controller: passwordController,
                   obscureText: true,
                   decoration: const InputDecoration(
+                    hintText: 'Enter password',
+                    isDense: true,
                     border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'Terminal Unlock PIN (optional)',
+                  'Terminal Unlock PIN',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 const SizedBox(height: 6),
                 TextField(
                   controller: unlockPinController,
                   keyboardType: TextInputType.number,
-                  obscureText: true,
                   decoration: const InputDecoration(
-                    helperText:
-                        'Used only if the existing POS session is idle-locked.',
+                    hintText: 'e.g. 1234 or 1359',
+                    isDense: true,
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -204,7 +211,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Cancel'),
             ),
-            ElevatedButton.icon(
+            ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF155EEF),
                 foregroundColor: Colors.white,
@@ -218,77 +225,15 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
                 });
                 Navigator.pop(dialogContext);
                 _addMessage(
-                  'Setup Configured',
-                  'Target: Local Machine · Profile: ${tempProfile.label}',
-                  QaActivityKind.success,
-                );
-              },
-              icon: const Icon(Icons.check),
-              label: const Text('Save Changes'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _openNewSuiteDialog() {
-    final suiteNameController = TextEditingController();
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Row(
-          children: <Widget>[
-            Icon(Icons.add_circle_outline_rounded, color: Color(0xFF155EEF)),
-            SizedBox(width: 10),
-            Text('Create New Test Suite'),
-          ],
-        ),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 400),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Text(
-                'Suite Title',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 6),
-              TextField(
-                controller: suiteNameController,
-                decoration: const InputDecoration(
-                  hintText: 'e.g. Checkout & Payments Suite',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF155EEF),
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () {
-              final name = suiteNameController.text.trim();
-              Navigator.pop(dialogContext);
-              if (name.isNotEmpty) {
-                _addMessage(
-                  'Suite Created',
-                  'Added new test suite "$name"',
+                  'Credentials Updated',
+                  'Profile: ${tempProfile.label} · Login ID: ${_loginId.isEmpty ? "(Prompt)" : _loginId}',
                   QaActivityKind.info,
                 );
-              }
-            },
-            child: const Text('Create'),
-          ),
-        ],
+              },
+              child: const Text('Save Credentials'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -367,6 +312,27 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     );
   }
 
+  Future<void> _stopRunningSuite() async {
+    if (!_running || _stopRequested) return;
+
+    setState(() => _stopRequested = true);
+    _addMessage(
+      'Stop Requested',
+      'Stopping the active test case and closing the PenguinPOS instance launched by QA.',
+      QaActivityKind.info,
+    );
+    await _activeLaunch?.close();
+  }
+
+  void _recordCompletedScenario(String scenarioName) {
+    if (!mounted || _scenariosCompletedSoFar.contains(scenarioName)) return;
+    setState(() => _scenariosCompletedSoFar.add(scenarioName));
+  }
+
+  String _interruptionDetails({required bool wasStopped}) => wasStopped
+      ? 'Test stopped by the user. Completed test cases are retained; remaining cases are pending.'
+      : 'PenguinPOS was quit during testing. Completed test cases are retained; remaining cases are pending.';
+
   Future<void> _runSelectedSuite() async {
     final currentSuite = TestSuiteItem.availableSuites.firstWhere(
       (s) => s.id == _selectedSuiteId,
@@ -408,6 +374,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _lastExecutionPassed = null;
       _lastExecutionDetails = null;
       _wasAppClosedByUser = false;
+      _stopRequested = false;
       _scenariosCompletedSoFar = <String>[];
     });
 
@@ -427,47 +394,132 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         entity: _profile.entity,
         env: _profile.environment,
       );
+      _activeLaunch = launched;
 
-      final result = await PenguinPosLoginRunner().runFullSequence(
-        LoginScenario(
-          id: 'login_terminal_full_sequence',
-          name: 'Login and terminal selection',
-          loginId: _loginId,
-          password: _password,
-          unlockPin: _unlockPin,
-        ),
-        vmServiceUri: launched.vmServiceUri,
-      );
-
-      stopwatch.stop();
-
-      setState(() {
-        _lastExecutionDuration = stopwatch.elapsed;
-        _lastExecutionPassed = result.passed;
-        _wasAppClosedByUser = result.wasAppClosedByUser;
-        _scenariosCompletedSoFar = result.scenariosExecuted;
-        _lastExecutionDetails = result.passed
-            ? 'Successfully executed all scenarios: ${result.scenariosExecuted.join(', ')}.'
-            : (result.wasAppClosedByUser
-                  ? 'Application was manually quit during testing.'
-                  : (result.error ??
-                        'The test driver did not reach the expected UI state.'));
-      });
-
-      if (result.wasAppClosedByUser) {
+      if (_stopRequested) {
+        stopwatch.stop();
+        setState(() {
+          _lastExecutionDuration = stopwatch.elapsed;
+          _lastExecutionPassed = false;
+          _wasAppClosedByUser = true;
+          _lastExecutionDetails = _interruptionDetails(wasStopped: true);
+        });
         _addMessage(
-          'Suite Failed ❌',
-          'Failed at scenario "Auth Failure Handling".',
-          QaActivityKind.error,
+          'Test Stopped',
+          _lastExecutionDetails!,
+          QaActivityKind.info,
         );
+        return;
+      }
+
+      if (_selectedSuiteId == 'order_checkout') {
+        final scenario = OrderScenario(
+          id: _orderScenario.id,
+          name: _orderScenario.name,
+          loginId: _loginId.isNotEmpty ? _loginId : null,
+          password: _password.isNotEmpty ? _password : null,
+          unlockPin: _unlockPin.isNotEmpty ? _unlockPin : null,
+          items: _orderScenario.items,
+          ordersCount: _orderScenario.ordersCount,
+          inputSourceMode: _orderScenario.inputSourceMode,
+          uiCustomMode: _orderScenario.uiCustomMode,
+          perIterationItems: _orderScenario.perIterationItems,
+          rawJson: _orderScenario.rawJson,
+          rawCsv: _orderScenario.rawCsv,
+        );
+
+        final result = await PenguinPosOrderRunner().run(
+          scenario,
+          vmServiceUri: launched.vmServiceUri,
+          onScenarioCompleted: _recordCompletedScenario,
+          onBatchProgress: (completed, total) {
+            _addMessage(
+              'Order Progress',
+              'Completed order $completed of $total back-to-back orders.',
+              QaActivityKind.info,
+            );
+          },
+        );
+
+        stopwatch.stop();
+
+        setState(() {
+          _lastOrderRunResult = result;
+          _lastExecutionDuration = stopwatch.elapsed;
+          _lastExecutionPassed = result.passed;
+          _wasAppClosedByUser = result.wasAppClosedByUser || _stopRequested;
+          if (result.passed) {
+            _scenariosCompletedSoFar = <String>[
+              'Start Sale & Customer Handling',
+              'SKU & Weighed Item Entry',
+              'Cash Payment & Round-Off',
+            ];
+          }
+          _lastExecutionDetails = result.passed
+              ? 'Punched ${result.ordersCompleted} orders (${result.totalItemsProcessed} total items). Aggregate payable: ₹${result.aggregateTotalPayable.toStringAsFixed(2)} → Cash: ₹${result.aggregatePayableAmount}.'
+              : (_wasAppClosedByUser
+                    ? _interruptionDetails(wasStopped: _stopRequested)
+                    : (result.error ??
+                          'The test driver did not reach the expected UI state.'));
+        });
+
+        if (_wasAppClosedByUser) {
+          _addMessage(
+            _stopRequested ? 'Test Stopped' : 'Application Quit',
+            _lastExecutionDetails!,
+            QaActivityKind.info,
+          );
+        } else {
+          _addMessage(
+            result.passed ? 'Order Suite Passed 🎉' : 'Order Suite Failed ❌',
+            result.passed
+                ? 'Punched ${result.ordersCompleted} of ${result.ordersTarget} orders (${result.totalItemsProcessed} items) in ${stopwatch.elapsed.inSeconds}s (Cash: ₹${result.aggregatePayableAmount}).'
+                : (result.error ?? 'Order checkout test failed.'),
+            result.passed ? QaActivityKind.success : QaActivityKind.error,
+          );
+        }
       } else {
-        _addMessage(
-          result.passed ? 'Suite Passed 🎉' : 'Suite Failed ❌',
-          result.passed
-              ? 'Completed in ${stopwatch.elapsed.inSeconds}s (${result.scenariosExecuted.length} scenarios).'
-              : (result.error ?? 'Test execution failed.'),
-          result.passed ? QaActivityKind.success : QaActivityKind.error,
+        final result = await PenguinPosLoginRunner().runFullSequence(
+          LoginScenario(
+            id: 'login_terminal_full_sequence',
+            name: 'Login and terminal selection',
+            loginId: _loginId,
+            password: _password,
+            unlockPin: _unlockPin,
+          ),
+          vmServiceUri: launched.vmServiceUri,
         );
+
+        stopwatch.stop();
+
+        setState(() {
+          _lastExecutionDuration = stopwatch.elapsed;
+          _lastExecutionPassed = result.passed;
+          _wasAppClosedByUser = result.wasAppClosedByUser || _stopRequested;
+          _scenariosCompletedSoFar = result.scenariosExecuted;
+          _lastExecutionDetails = result.passed
+              ? 'Successfully executed all scenarios: ${result.scenariosExecuted.join(', ')}.'
+              : (_wasAppClosedByUser
+                    ? _interruptionDetails(wasStopped: _stopRequested)
+                    : (result.error ??
+                          'The test driver did not reach the expected UI state.'));
+        });
+
+        if (_wasAppClosedByUser) {
+          _addMessage(
+            _stopRequested ? 'Test Stopped' : 'Application Quit',
+            _lastExecutionDetails!,
+            QaActivityKind.info,
+          );
+        } else {
+          _addMessage(
+            result.passed ? 'Suite Passed 🎉' : 'Suite Failed ❌',
+            result.passed
+                ? 'Completed in ${stopwatch.elapsed.inSeconds}s (${result.scenariosExecuted.length} scenarios).'
+                : (result.error ?? 'Test execution failed.'),
+            result.passed ? QaActivityKind.success : QaActivityKind.error,
+          );
+        }
       }
     } catch (error) {
       stopwatch.stop();
@@ -481,23 +533,26 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       setState(() {
         _lastExecutionDuration = stopwatch.elapsed;
         _lastExecutionPassed = false;
-        _wasAppClosedByUser = isAppQuit;
-        _lastExecutionDetails = isAppQuit
-            ? 'Application was quit during testing.'
+        _wasAppClosedByUser = isAppQuit || _stopRequested;
+        _lastExecutionDetails = (isAppQuit || _stopRequested)
+            ? _interruptionDetails(wasStopped: _stopRequested)
             : errStr;
       });
 
-      if (isAppQuit) {
+      if (isAppQuit || _stopRequested) {
         _addMessage(
-          'Suite Failed ❌',
-          'Failed at scenario "Auth Failure Handling".',
-          QaActivityKind.error,
+          _stopRequested ? 'Test Stopped' : 'Application Quit',
+          _lastExecutionDetails!,
+          QaActivityKind.info,
         );
       } else {
         _addMessage('Suite Error', errStr, QaActivityKind.error);
       }
     } finally {
-      await launched?.close();
+      try {
+        await launched?.close();
+      } catch (_) {}
+      if (identical(_activeLaunch, launched)) _activeLaunch = null;
       if (mounted) {
         setState(() => _running = false);
       }
@@ -505,8 +560,9 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   }
 
   void _addMessage(String title, String body, QaActivityKind kind) {
-    if (!mounted) return;
-    setState(() => _messages.add(QaActivityMessage(title, body, kind)));
+    setState(() {
+      _messages.add(QaActivityMessage(title, body, kind));
+    });
   }
 
   @override
@@ -524,40 +580,74 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       );
     }
 
-    final currentSuite = TestSuiteItem.availableSuites.firstWhere(
+    final activeSuite = TestSuiteItem.availableSuites.firstWhere(
       (s) => s.id == _selectedSuiteId,
       orElse: () => TestSuiteItem.availableSuites.first,
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF1F5F9),
       body: Row(
         children: <Widget>[
-          // Side Navigation Bar matching mockup
+          // Left Sidebar
           SideNav(
             suites: TestSuiteItem.availableSuites,
             selectedSuiteId: _selectedSuiteId,
-            onSelectSuite: (id) => setState(() => _selectedSuiteId = id),
-            onOpenSetup: () => setState(() => _setupCompleted = false),
+            onSelectSuite: (id) {
+              setState(() {
+                _selectedSuiteId = id;
+                _lastExecutionPassed = null;
+                _wasAppClosedByUser = false;
+                _lastExecutionDetails = null;
+                _scenariosCompletedSoFar = <String>[];
+              });
+            },
+            onOpenSetup: () {
+              setState(() => _setupCompleted = false);
+            },
             onOpenEditCredentials: _openEditCredentialsDialog,
-            onNewSuite: _openNewSuiteDialog,
+            onNewSuite: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Custom suite builder is planned for upcoming release.',
+                  ),
+                ),
+              );
+            },
             onOpenSettings: _openSettingsDialog,
             onOpenSupport: _openSupportDialog,
             activeProfileLabel: _profile.label,
             targetMode: _targetMode,
           ),
 
-          // Main Suite Workspace & Activity Panel
+          // Main Active Test Suite Workspace
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: Row(
-                children: <Widget>[
-                  // Suite Screen (LoginSuiteScreen)
-                  Expanded(
-                    flex: 6,
-                    child: LoginSuiteScreen(
-                      suite: currentSuite,
+              child: _selectedSuiteId == 'order_checkout'
+                  ? OrderSuiteScreen(
+                      suite: activeSuite,
+                      currentProfile: _profile,
+                      targetMode: _targetMode,
+                      flutterPath: _flutterPath,
+                      appRoot: _appRoot,
+                      running: _running,
+                      lastExecutionPassed: _lastExecutionPassed,
+                      lastExecutionDuration: _lastExecutionDuration,
+                      lastExecutionDetails: _lastExecutionDetails,
+                      wasAppClosedByUser: _wasAppClosedByUser,
+                      scenariosCompleted: _scenariosCompletedSoFar,
+                      orderScenario: _orderScenario,
+                      lastOrderRunResult: _lastOrderRunResult,
+                      onUpdateScenario: (updated) {
+                        setState(() => _orderScenario = updated);
+                      },
+                      onRunSuite: _runSelectedSuite,
+                      onStopSuite: _stopRunningSuite,
+                    )
+                  : LoginSuiteScreen(
+                      suite: activeSuite,
                       currentProfile: _profile,
                       loginId: _loginId,
                       password: _password,
@@ -570,31 +660,22 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
                       lastExecutionDetails: _lastExecutionDetails,
                       wasAppClosedByUser: _wasAppClosedByUser,
                       scenariosCompleted: _scenariosCompletedSoFar,
-                      onProfileChanged: (newProfile) {
-                        setState(() => _profile = newProfile);
-                        _addMessage(
-                          'Setup Configured',
-                          'Target: Local Machine · Profile: ${newProfile.label}',
-                          QaActivityKind.success,
-                        );
-                      },
-                      onLoginIdChanged: (newId) =>
-                          setState(() => _loginId = newId),
-                      onPasswordChanged: (newPass) =>
-                          setState(() => _password = newPass),
+                      onProfileChanged: (p) => setState(() => _profile = p),
+                      onLoginIdChanged: (id) => setState(() => _loginId = id),
+                      onPasswordChanged: (pass) =>
+                          setState(() => _password = pass),
                       onRunSuite: _runSelectedSuite,
+                      onStopSuite: _stopRunningSuite,
                     ),
-                  ),
+            ),
+          ),
 
-                  const SizedBox(width: 16),
-
-                  // Real-time Activity Log Panel
-                  Expanded(
-                    flex: 4,
-                    child: QaActivityPanel(messages: _messages),
-                  ),
-                ],
-              ),
+          // Right Activity Stepper Panel
+          SizedBox(
+            width: 320,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(0, 20, 20, 20),
+              child: QaActivityPanel(messages: _messages),
             ),
           ),
         ],

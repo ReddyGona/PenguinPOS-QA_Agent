@@ -1,6 +1,4 @@
-import 'dart:async';
-import 'dart:io';
-
+import 'package:flutter/foundation.dart';
 import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
@@ -42,15 +40,10 @@ class LoginRunResult {
 
 /// Executes login & terminal configuration actions via DriverEngine against a running PenguinPOS instance.
 class PenguinPosLoginRunner {
-  void _trace(String message) {
-    stderr.writeln('[PenguinPOS QA][login] $message');
-  }
+  void _trace(String msg) => debugPrint('[LoginRunner] $msg');
 
   /// Ensures the app is at Login before starting a suite.
-  ///
-  /// Startup is synchronized through the target widget tree: Login, Idle Lock,
-  /// or Home. An existing locked session must be unlocked before the Logout
-  /// action is available.
+  /// Unlocks active idle-timeout session using CustomNumPad digit keys (`idle_timeout.numpad.digit.<digit>`).
   Future<void> _ensureLoggedOut(
     DriverEngine engine, {
     required String? unlockPin,

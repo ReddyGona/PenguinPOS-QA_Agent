@@ -170,6 +170,34 @@ class DriverEngine {
     }
   }
 
+  Future<String?> tryGetText(
+    String key, {
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final driver = _driver;
+    if (driver == null) return null;
+    try {
+      await driver.waitFor(find.byValueKey(key), timeout: timeout);
+      return await driver.getText(find.byValueKey(key), timeout: timeout);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Reads text from a keyed Text, RichText, or editable field.
+  ///
+  /// Unlike [tryGetText], this preserves driver errors so a required test
+  /// value cannot silently become a default value.
+  Future<String> getText(
+    String key, {
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    final driver = _driver;
+    if (driver == null) throw StateError('Driver is not connected');
+    await driver.waitFor(find.byValueKey(key), timeout: timeout);
+    return driver.getText(find.byValueKey(key), timeout: timeout);
+  }
+
   Future<void> enterTextDirect(String text, {Duration? delay}) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
@@ -242,7 +270,9 @@ class DriverEngine {
   }
 
   Future<void> close() async {
-    await _driver?.close();
+    try {
+      await _driver?.close();
+    } catch (_) {}
     _driver = null;
   }
 }
