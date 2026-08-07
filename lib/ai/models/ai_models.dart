@@ -2,17 +2,26 @@ import 'dart:convert';
 
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
 
+/// Shared contracts between the assistant UI, planner, and model provider.
+///
+/// These models contain only safe planning data. Credentials and direct driver
+/// commands never travel through this layer.
 enum AiProviderKind { openAiCompatible }
 
+/// Persisted connection settings for an OpenAI-compatible planning model.
 class AiModelConfig {
+  static const defaultBaseUrl = 'http://127.0.0.1:11434/v1';
+  static const defaultLabel = 'Local OpenAI-compatible';
+  static const defaultMaxOutputTokens = 1200;
+
   const AiModelConfig({
     this.providerKind = AiProviderKind.openAiCompatible,
-    this.label = 'Local OpenAI-compatible',
-    this.baseUrl = 'http://127.0.0.1:11434/v1',
+    this.label = defaultLabel,
+    this.baseUrl = defaultBaseUrl,
     this.model = '',
     this.isCloud = false,
     this.temperature = 0.1,
-    this.maxOutputTokens = 1200,
+    this.maxOutputTokens = defaultMaxOutputTokens,
     this.enableVerboseReasoning = false,
   });
 
@@ -28,6 +37,7 @@ class AiModelConfig {
   /// tokens and can slow planning, so structured-plan mode keeps it off.
   final bool enableVerboseReasoning;
 
+  /// A selected model and endpoint are both required before AI planning starts.
   bool get isConfigured => model.trim().isNotEmpty && baseUrl.trim().isNotEmpty;
 
   AiModelConfig copyWith({
@@ -68,12 +78,13 @@ class AiModelConfig {
         (kind) => kind.name == json['providerKind'],
         orElse: () => AiProviderKind.openAiCompatible,
       ),
-      label: (json['label'] as String?) ?? 'OpenAI-compatible',
-      baseUrl: (json['baseUrl'] as String?) ?? 'http://127.0.0.1:11434/v1',
+      label: (json['label'] as String?) ?? defaultLabel,
+      baseUrl: (json['baseUrl'] as String?) ?? defaultBaseUrl,
       model: (json['model'] as String?) ?? '',
       isCloud: (json['isCloud'] as bool?) ?? false,
       temperature: (json['temperature'] as num?)?.toDouble() ?? 0.1,
-      maxOutputTokens: (json['maxOutputTokens'] as num?)?.toInt() ?? 600,
+      maxOutputTokens:
+          (json['maxOutputTokens'] as num?)?.toInt() ?? defaultMaxOutputTokens,
       enableVerboseReasoning:
           (json['enableVerboseReasoning'] as bool?) ?? false,
     );
@@ -88,6 +99,8 @@ enum AiPlanState { needsInput, readyForConfirmation, unsupported }
 
 enum AiItemStrategy { sameForAll, perOrder }
 
+/// A validated, provider-independent plan that can be translated into a QA
+/// suite. This stays declarative; execution happens only in the dashboard.
 class AiTestPlan {
   const AiTestPlan({
     required this.workflow,
@@ -107,6 +120,7 @@ class AiTestPlan {
 
   bool get isOrder => workflow == AiWorkflow.orderCashPayment;
 
+  /// Flattens shared and per-order items for input validation.
   Iterable<OrderItem> get allItems sync* {
     yield* items;
     for (final orderItems in perIterationItems.values) {
@@ -216,6 +230,7 @@ class AiTestPlan {
   }
 }
 
+/// Result returned by either the shortcut parser or the model planner.
 class AiAssistantResponse {
   const AiAssistantResponse({
     required this.message,
