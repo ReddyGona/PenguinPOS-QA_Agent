@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
@@ -122,6 +123,7 @@ class PenguinPosOrderRunner {
     DriverEngine? driverEngine,
     void Function(String scenarioName)? onScenarioCompleted,
     void Function(int completed, int total)? onBatchProgress,
+    void Function(ExecutionEvent event)? onExecutionEvent,
   }) async {
     final startedAt = DateTime.now();
     final engine = driverEngine ?? DriverEngine();
@@ -136,9 +138,19 @@ class PenguinPosOrderRunner {
     int aggregatePayableAmount = 0;
 
     final List<OrderLoopMetrics> loopMetricsList = <OrderLoopMetrics>[];
+    void emit(
+      String title,
+      String message, {
+      ExecutionEventLevel level = ExecutionEventLevel.info,
+    }) {
+      onExecutionEvent?.call(
+        ExecutionEvent(title: title, message: message, level: level),
+      );
+    }
 
     try {
       await engine.connect(vmServiceUri, timeout: timeout);
+      emit('Driver Connected', 'Connected to PenguinPOS Flutter Driver.');
 
       // Step 1 & 2: Initial App state probe (Login, Idle Lock, Home, Order Screen)
       final initialState = await engine.waitForAnyKey(<String>[
@@ -178,6 +190,10 @@ class PenguinPosOrderRunner {
           timeout: timeout,
         );
         await engine.tap(PenguinPosLoginKeys.terminalContinue, delay: delay);
+        emit(
+          'Login Completed',
+          'Logged in and continued through terminal selection.',
+        );
       }
 
       final isIdleLockActive = await engine.hasKey(
@@ -186,11 +202,12 @@ class PenguinPosOrderRunner {
       );
 
       if (isIdleLockActive) {
-        final pin =
-            (scenario.unlockPin != null &&
-                scenario.unlockPin!.trim().isNotEmpty)
-            ? scenario.unlockPin!.trim()
-            : '1234';
+        final pin = scenario.unlockPin?.trim();
+        if (pin == null || pin.isEmpty) {
+          throw StateError(
+            'PenguinPOS is locked. Supply the terminal unlock PIN to continue.',
+          );
+        }
 
         await engine.waitFor(
           PenguinPosLoginKeys.idlePinInput,
@@ -207,6 +224,10 @@ class PenguinPosOrderRunner {
           PenguinPosLoginKeys.idleWidget,
           timeout: timeout,
         );
+        emit(
+          'Terminal Unlocked',
+          'Idle timeout lock was removed with the supplied PIN.',
+        );
       }
 
       // Step 3: Back-to-Back Orders Punching Loop
@@ -215,6 +236,10 @@ class PenguinPosOrderRunner {
         final List<OrderStepMetric> stepMetrics = <OrderStepMetric>[];
 
         _trace('--- Starting Order ${orderIdx + 1} of $targetOrders ---');
+        emit(
+          'Order ${orderIdx + 1} Started',
+          'Preparing order ${orderIdx + 1} of $targetOrders.',
+        );
 
         // Order Layout Sync Check
         final isOrderLayoutActive = await engine.hasKey(
@@ -347,6 +372,10 @@ class PenguinPosOrderRunner {
 
           itemsThisOrder++;
         }
+        emit(
+          'Items Entered',
+          '$itemsThisOrder item(s) entered for order ${orderIdx + 1}.',
+        );
 
         stepMetrics.add(
           OrderStepMetric(
@@ -384,6 +413,10 @@ class PenguinPosOrderRunner {
           timeout: timeout,
         );
         await engine.tap(PenguinPosOrderKeys.orderProceedToPay, delay: delay);
+        emit(
+          'Checkout Started',
+          'Cart processing complete; proceeding to payment.',
+        );
 
         stepMetrics.add(
           OrderStepMetric(
@@ -448,6 +481,7 @@ class PenguinPosOrderRunner {
           timeout: timeout,
         );
         await engine.tap(PenguinPosOrderKeys.paymentNumPadEnter, delay: delay);
+        emit('Cash Submitted', 'Submitted cash payment of ₹$roundedPayable.');
 
         stepMetrics.add(
           OrderStepMetric(
@@ -591,6 +625,11 @@ class PenguinPosOrderRunner {
         );
 
         onBatchProgress?.call(ordersCompleted, targetOrders);
+        emit(
+          'Order ${orderIdx + 1} Completed',
+          'Completed $ordersCompleted of $targetOrders orders.',
+          level: ExecutionEventLevel.success,
+        );
       }
 
       onScenarioCompleted?.call('Start Sale & Customer Handling');
@@ -611,6 +650,7 @@ class PenguinPosOrderRunner {
       );
     } catch (error) {
       final errorStr = error.toString();
+      emit('Order Suite Error', errorStr, level: ExecutionEventLevel.error);
       final isAppClosed =
           errorStr.contains('Service has disappeared') ||
           errorStr.contains('112') ||

@@ -3,15 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
 
-/// Side Navigation Bar matching the exact design mockup.
+/// Side Navigation Bar matching the reference design layout & material design tokens.
 class SideNav extends StatelessWidget {
   const SideNav({
     super.key,
     required this.suites,
     required this.selectedSuiteId,
     required this.onSelectSuite,
-    required this.onOpenSetup,
-    required this.onOpenEditCredentials,
     required this.onNewSuite,
     required this.onOpenSettings,
     required this.onOpenSupport,
@@ -22,8 +20,6 @@ class SideNav extends StatelessWidget {
   final List<TestSuiteItem> suites;
   final String selectedSuiteId;
   final ValueChanged<String> onSelectSuite;
-  final VoidCallback onOpenSetup;
-  final VoidCallback onOpenEditCredentials;
   final VoidCallback onNewSuite;
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenSupport;
@@ -33,7 +29,10 @@ class SideNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: 250,
-    color: const Color(0xFF0B0F19),
+    decoration: const BoxDecoration(
+      color: Color(0xFFF6F4F0),
+      border: Border(right: BorderSide(color: Color(0xFFC7C9C4), width: 1)),
+    ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -43,15 +42,15 @@ class SideNav extends StatelessWidget {
           child: Row(
             children: <Widget>[
               Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF155EEF),
-                  borderRadius: BorderRadius.circular(8),
+                width: 38,
+                height: 38,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFBCEBE5),
+                  shape: BoxShape.circle,
                 ),
                 child: const Icon(
-                  Icons.dvr_rounded,
-                  color: Colors.white,
+                  Icons.auto_awesome_rounded,
+                  color: Color(0xFF182A22),
                   size: 20,
                 ),
               ),
@@ -63,16 +62,17 @@ class SideNav extends StatelessWidget {
                     const Text(
                       'QA Agent',
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2C302E),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
                       ),
                     ),
                     Text(
                       '$activeProfileLabel • ${targetMode == QaTargetMode.local ? "Local" : "SSH"}',
                       style: const TextStyle(
-                        color: Color(0xFF94A3B8),
-                        fontSize: 11,
+                        color: Color(0xFF494C4A),
+                        fontSize: 11.5,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -88,9 +88,10 @@ class SideNav extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF155EEF),
+              backgroundColor: const Color(0xFF658A7A),
               foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 44),
+              elevation: 0,
+              minimumSize: const Size(double.infinity, 42),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -99,35 +100,16 @@ class SideNav extends StatelessWidget {
             icon: const Icon(Icons.add, size: 18),
             label: const Text(
               'New Suite',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
             ),
           ),
         ),
 
         const SizedBox(height: 8),
 
-        // Quick Action Links
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(
-            children: <Widget>[
-              _QuickLinkItem(
-                icon: Icons.key_rounded,
-                label: 'Credentials & Env',
-                onTap: onOpenEditCredentials,
-              ),
-              _QuickLinkItem(
-                icon: Icons.build_rounded,
-                label: 'Re-configure',
-                onTap: onOpenSetup,
-              ),
-            ],
-          ),
-        ),
-
         const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          child: Divider(color: Color(0xFF1E293B), height: 1),
+          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child: Divider(color: Color(0xFFC7C9C4), height: 1),
         ),
 
         // Section Header
@@ -136,7 +118,7 @@ class SideNav extends StatelessWidget {
           child: Text(
             'TEST SUITES',
             style: TextStyle(
-              color: Color(0xFF64748B),
+              color: Color(0xFF787A76),
               fontSize: 11,
               fontWeight: FontWeight.bold,
               letterSpacing: 1.0,
@@ -164,7 +146,7 @@ class SideNav extends StatelessWidget {
 
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 20),
-          child: Divider(color: Color(0xFF1E293B), height: 1),
+          child: Divider(color: Color(0xFFC7C9C4), height: 1),
         ),
 
         // Footer Action Items
@@ -178,7 +160,7 @@ class SideNav extends StatelessWidget {
                 onTap: onOpenSettings,
               ),
               _QuickLinkItem(
-                icon: Icons.help_outline_rounded,
+                icon: Icons.contact_support_outlined,
                 label: 'Support',
                 onTap: onOpenSupport,
               ),
@@ -210,12 +192,12 @@ class _QuickLinkItem extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         child: Row(
           children: <Widget>[
-            Icon(icon, size: 18, color: const Color(0xFF94A3B8)),
+            Icon(icon, size: 18, color: const Color(0xFF494C4A)),
             const SizedBox(width: 10),
             Text(
               label,
               style: const TextStyle(
-                color: Color(0xFFCBD5E1),
+                color: Color(0xFF2C302E),
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
@@ -242,21 +224,23 @@ class _SideNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 3),
+    padding: const EdgeInsets.symmetric(vertical: 2),
     child: Material(
-      color: active ? const Color(0xFF155EEF) : Colors.transparent,
+      color: active ? const Color(0xFFDCE4DF) : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: <Widget>[
               Icon(
                 icon,
                 size: 18,
-                color: active ? Colors.white : const Color(0xFF94A3B8),
+                color: active
+                    ? const Color(0xFF182A22)
+                    : const Color(0xFF494C4A),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -264,9 +248,11 @@ class _SideNavItem extends StatelessWidget {
                   label,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: active ? Colors.white : const Color(0xFFCBD5E1),
+                    color: active
+                        ? const Color(0xFF182A22)
+                        : const Color(0xFF2C302E),
                     fontSize: 13,
-                    fontWeight: active ? FontWeight.bold : FontWeight.w500,
+                    fontWeight: active ? FontWeight.w600 : FontWeight.w500,
                   ),
                 ),
               ),

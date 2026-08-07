@@ -12,10 +12,12 @@ class QaAgentGuiApp extends StatelessWidget {
     theme: ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF155EEF),
+        seedColor: const Color(0xFF658A7A),
+        surface: const Color(0xFFFDFBF7),
         brightness: Brightness.light,
       ),
-      scaffoldBackgroundColor: const Color(0xFFF7F8FC),
+      scaffoldBackgroundColor: const Color(0xFFFDFBF7),
+      fontFamily: 'Inter',
     ),
     home: const QaDashboardScreen(),
   );

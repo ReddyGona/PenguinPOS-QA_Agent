@@ -22,7 +22,6 @@ class LoginSuiteScreen extends StatefulWidget {
     required this.lastExecutionDetails,
     required this.wasAppClosedByUser,
     required this.scenariosCompleted,
-    required this.onProfileChanged,
     required this.onLoginIdChanged,
     required this.onPasswordChanged,
     required this.onRunSuite,
@@ -44,7 +43,6 @@ class LoginSuiteScreen extends StatefulWidget {
   final bool wasAppClosedByUser;
   final List<String> scenariosCompleted;
 
-  final ValueChanged<QaProfile> onProfileChanged;
   final ValueChanged<String> onLoginIdChanged;
   final ValueChanged<String> onPasswordChanged;
   final VoidCallback onRunSuite;
