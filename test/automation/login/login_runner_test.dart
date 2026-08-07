@@ -14,6 +14,7 @@ void main() {
       expect(scenario.id, equals('test_login'));
       expect(scenario.loginId, equals('8888888888'));
       expect(scenario.password, equals('secret_password'));
+      expect(scenario.unlockPin, isNull);
       expect(scenario.terminalContinueKey, equals('login.terminal.continue'));
       expect(scenario.expectedKey, equals('home.screen'));
     });

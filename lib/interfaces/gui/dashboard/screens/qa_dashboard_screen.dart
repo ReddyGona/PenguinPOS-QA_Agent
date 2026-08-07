@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 
-import '../../../../automation/login/login_runner.dart';
-import '../../../../automation/login/login_scenario.dart';
-import '../../../../runtime/app_launcher.dart';
-import '../model/qa_dashboard_models.dart';
-import '../repository/qa_target_preferences_repository.dart';
-import '../widgets/qa_dashboard_widgets.dart';
+import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
+import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
+import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
+import 'package:penguin_pos_qa_agent/runtime/path_detector.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/onboarding/screens/onboarding_setup_screen.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/repository/qa_target_preferences_repository.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/qa_activity_panel.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/side_nav.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/login/login_suite_screen.dart';
 
+/// Main Dashboard container screen managing setup state, sidebar navigation, active suite screen, and activity log matching the mockup.
 class QaDashboardScreen extends StatefulWidget {
   const QaDashboardScreen({super.key});
 
@@ -16,19 +22,32 @@ class QaDashboardScreen extends StatefulWidget {
 
 class _QaDashboardScreenState extends State<QaDashboardScreen> {
   final _preferences = QaTargetPreferencesRepository();
-  final _sshUser = TextEditingController();
-  final _sshHost = TextEditingController();
-  final _loginId = TextEditingController();
-  final _password = TextEditingController();
+
+  bool _setupCompleted = false;
+
   QaTargetMode _targetMode = QaTargetMode.local;
-  QaProfile? _profile;
-  bool _testsUnlocked = false;
-  bool _showTests = false;
+  String _flutterPath = 'flutter';
+  String _appRoot = '/Users/reddygona/Documents/PenguinPOS/penguin_pos';
+  QaProfile _profile = QaProfile.values.first;
+  String _loginId = '';
+  String _password = '';
+  String _unlockPin = '';
+  String _sshUser = '';
+  String _sshHost = '';
+
+  String _selectedSuiteId = 'login_terminal';
+
   bool _running = false;
+  Duration? _lastExecutionDuration;
+  bool? _lastExecutionPassed;
+  String? _lastExecutionDetails;
+  bool _wasAppClosedByUser = false;
+  List<String> _scenariosCompletedSoFar = <String>[];
+
   final _messages = <QaActivityMessage>[
-    const QaActivityMessage(
+    QaActivityMessage(
       'Ready',
-      'Choose a target and QA profile to unlock the fixed test suite.',
+      'Complete onboarding setup to unlock the workspace.',
       QaActivityKind.info,
     ),
   ];
@@ -36,107 +55,452 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _restoreSshTarget();
+    _loadSavedTargetPreferences();
   }
 
-  Future<void> _restoreSshTarget() async {
+  Future<void> _loadSavedTargetPreferences() async {
     final target = await _preferences.loadSshTarget();
+    final detectedFlutter = await PathDetector.detectFlutterPath();
+    final detectedAppRoot = await PathDetector.detectAppRoot();
+
     if (!mounted) return;
     setState(() {
-      _sshUser.text = target.username;
-      _sshHost.text = target.host;
+      _sshUser = target.username;
+      _sshHost = target.host;
+      _flutterPath = detectedFlutter;
+      _appRoot = detectedAppRoot;
     });
   }
 
-  Future<void> _saveConfiguration() async {
-    if (_profile == null) {
-      _addMessage(
-        'Configuration needed',
-        'Select an entity and environment profile before continuing.',
-        QaActivityKind.error,
-      );
-      return;
-    }
-    if (_targetMode == QaTargetMode.ssh &&
-        (_sshUser.text.trim().isEmpty || _sshHost.text.trim().isEmpty)) {
-      _addMessage(
-        'SSH target needed',
-        'Enter both SSH username and host/IP before continuing.',
-        QaActivityKind.error,
-      );
-      return;
-    }
-    await _preferences.saveSshTarget(
-      QaSshTarget(username: _sshUser.text.trim(), host: _sshHost.text.trim()),
-    );
-    if (!mounted) return;
+  void _onSetupComplete({
+    required QaTargetMode targetMode,
+    required String flutterPath,
+    required String appRoot,
+    required QaProfile profile,
+    required String loginId,
+    required String password,
+    required String unlockPin,
+    required String sshUser,
+    required String sshHost,
+  }) async {
     setState(() {
-      _testsUnlocked = true;
-      _showTests = true;
+      _targetMode = targetMode;
+      _flutterPath = flutterPath;
+      _appRoot = appRoot;
+      _profile = profile;
+      _loginId = loginId;
+      _password = password;
+      _unlockPin = unlockPin;
+      _sshUser = sshUser;
+      _sshHost = sshHost;
+      _setupCompleted = true;
     });
+
+    if (sshUser.isNotEmpty || sshHost.isNotEmpty) {
+      await _preferences.saveSshTarget(
+        QaSshTarget(username: sshUser, host: sshHost),
+      );
+    }
+
     _addMessage(
-      'Configuration saved',
-      _targetMode == QaTargetMode.local
-          ? 'Local target with ${_profile!.label} is ready. The Login & Terminal suite is unlocked.'
-          : 'SSH target ${_sshUser.text.trim()}@${_sshHost.text.trim()} is saved. Remote execution will be enabled in the SSH phase.',
+      'Setup Configured',
+      'Target: ${targetMode == QaTargetMode.local ? "Local Machine" : "SSH ($sshUser@$sshHost)"} · Profile: ${profile.label}',
       QaActivityKind.success,
     );
   }
 
-  Future<void> _runLoginSuite() async {
-    if (_targetMode == QaTargetMode.ssh) {
+  void _openEditCredentialsDialog() {
+    final loginController = TextEditingController(text: _loginId);
+    final passwordController = TextEditingController(text: _password);
+    final unlockPinController = TextEditingController(text: _unlockPin);
+    QaProfile tempProfile = _profile;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Row(
+            children: <Widget>[
+              Icon(Icons.key_rounded, color: Color(0xFF155EEF)),
+              SizedBox(width: 10),
+              Text('Credentials & Environment'),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  'Target Profile / Environment',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<QaProfile>(
+                  initialValue: tempProfile,
+                  isDense: true,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                  ),
+                  items: QaProfile.values
+                      .map(
+                        (p) => DropdownMenuItem(value: p, child: Text(p.label)),
+                      )
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) setDialogState(() => tempProfile = val);
+                  },
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Test Login ID (10-digits)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: loginController,
+                  keyboardType: TextInputType.number,
+                  maxLength: 10,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    counterText: '',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Test Password',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Terminal Unlock PIN (optional)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: unlockPinController,
+                  keyboardType: TextInputType.number,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    helperText:
+                        'Used only if the existing POS session is idle-locked.',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF155EEF),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                setState(() {
+                  _profile = tempProfile;
+                  _loginId = loginController.text.trim();
+                  _password = passwordController.text;
+                  _unlockPin = unlockPinController.text.trim();
+                });
+                Navigator.pop(dialogContext);
+                _addMessage(
+                  'Setup Configured',
+                  'Target: Local Machine · Profile: ${tempProfile.label}',
+                  QaActivityKind.success,
+                );
+              },
+              icon: const Icon(Icons.check),
+              label: const Text('Save Changes'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openNewSuiteDialog() {
+    final suiteNameController = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: <Widget>[
+            Icon(Icons.add_circle_outline_rounded, color: Color(0xFF155EEF)),
+            SizedBox(width: 10),
+            Text('Create New Test Suite'),
+          ],
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text(
+                'Suite Title',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: suiteNameController,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. Checkout & Payments Suite',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF155EEF),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              final name = suiteNameController.text.trim();
+              Navigator.pop(dialogContext);
+              if (name.isNotEmpty) {
+                _addMessage(
+                  'Suite Created',
+                  'Added new test suite "$name"',
+                  QaActivityKind.info,
+                );
+              }
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openSettingsDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: <Widget>[
+            Icon(Icons.settings_outlined, color: Color(0xFF155EEF)),
+            SizedBox(width: 10),
+            Text('QA Agent Settings'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              'Flutter Path: $_flutterPath',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+            Text('App Root: $_appRoot', style: const TextStyle(fontSize: 12)),
+            const SizedBox(height: 6),
+            const Text(
+              'Execution Engine: FlutterDriver / VM Service',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openSupportDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: <Widget>[
+            Icon(Icons.help_outline_rounded, color: Color(0xFF155EEF)),
+            SizedBox(width: 10),
+            Text('PenguinPOS Support'),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              'PenguinPOS QA Agent v0.1.0',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 6),
+            Text(
+              'Automated execution driver & desktop GUI app for PenguinPOS testing.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runSelectedSuite() async {
+    final currentSuite = TestSuiteItem.availableSuites.firstWhere(
+      (s) => s.id == _selectedSuiteId,
+      orElse: () => TestSuiteItem.availableSuites.first,
+    );
+
+    if (!currentSuite.isImplemented) {
       _addMessage(
-        'SSH execution pending',
-        'The target is saved, but remote SSH execution is intentionally planned for the next phase.',
+        'Suite Pending',
+        'The ${currentSuite.title} runner is scheduled for the next phase.',
         QaActivityKind.info,
       );
+      setState(() {
+        _lastExecutionPassed = null;
+        _wasAppClosedByUser = false;
+        _lastExecutionDetails =
+            'This test suite is currently planned for the upcoming release phase.';
+      });
       return;
     }
-    if (_loginId.text.trim().length != 10 || _password.text.isEmpty) {
+
+    if (_targetMode == QaTargetMode.ssh) {
       _addMessage(
-        'Credentials needed',
-        'Enter a 10-digit login ID and test password. Password is not saved.',
-        QaActivityKind.error,
+        'SSH Execution Pending',
+        'Target $_sshUser@$_sshHost saved. SSH remote runner is planned for next phase.',
+        QaActivityKind.info,
       );
+      setState(() {
+        _lastExecutionPassed = null;
+        _wasAppClosedByUser = false;
+        _lastExecutionDetails =
+            'SSH execution target configured, but remote executor is intentionally deferred to the SSH phase.';
+      });
       return;
     }
-    final profile = _profile;
-    if (profile == null) return;
-    setState(() => _running = true);
+
+    setState(() {
+      _running = true;
+      _lastExecutionPassed = null;
+      _lastExecutionDetails = null;
+      _wasAppClosedByUser = false;
+      _scenariosCompletedSoFar = <String>[];
+    });
+
     _addMessage(
-      'Processing',
-      'Launching local PenguinPOS for ${profile.label} and running the fixed Login & Terminal suite.',
+      'Processing Suite',
+      'Launching PenguinPOS via $_flutterPath at $_appRoot for ${_profile.label}...',
       QaActivityKind.info,
     );
+
     LaunchedPenguinPos? launched;
+    final stopwatch = Stopwatch()..start();
+
     try {
       launched = await PenguinPosAppLauncher().launch(
-        appRoot: PenguinPosAppLauncher.defaultAppRoot,
-        entity: profile.entity,
-        env: profile.environment,
+        appRoot: _appRoot,
+        flutterExecutable: _flutterPath,
+        entity: _profile.entity,
+        env: _profile.environment,
       );
+
       final result = await PenguinPosLoginRunner().runFullSequence(
         LoginScenario(
           id: 'login_terminal_full_sequence',
           name: 'Login and terminal selection',
-          loginId: _loginId.text.trim(),
-          password: _password.text,
+          loginId: _loginId,
+          password: _password,
+          unlockPin: _unlockPin,
         ),
         vmServiceUri: launched.vmServiceUri,
       );
-      _addMessage(
-        result.passed ? 'Suite passed' : 'Suite failed',
-        result.passed
-            ? 'Completed: ${result.scenariosExecuted.join(', ')}.'
-            : (result.error ??
-                  'The driver did not reach the expected UI state.'),
-        result.passed ? QaActivityKind.success : QaActivityKind.error,
-      );
+
+      stopwatch.stop();
+
+      setState(() {
+        _lastExecutionDuration = stopwatch.elapsed;
+        _lastExecutionPassed = result.passed;
+        _wasAppClosedByUser = result.wasAppClosedByUser;
+        _scenariosCompletedSoFar = result.scenariosExecuted;
+        _lastExecutionDetails = result.passed
+            ? 'Successfully executed all scenarios: ${result.scenariosExecuted.join(', ')}.'
+            : (result.wasAppClosedByUser
+                  ? 'Application was manually quit during testing.'
+                  : (result.error ??
+                        'The test driver did not reach the expected UI state.'));
+      });
+
+      if (result.wasAppClosedByUser) {
+        _addMessage(
+          'Suite Failed ❌',
+          'Failed at scenario "Auth Failure Handling".',
+          QaActivityKind.error,
+        );
+      } else {
+        _addMessage(
+          result.passed ? 'Suite Passed 🎉' : 'Suite Failed ❌',
+          result.passed
+              ? 'Completed in ${stopwatch.elapsed.inSeconds}s (${result.scenariosExecuted.length} scenarios).'
+              : (result.error ?? 'Test execution failed.'),
+          result.passed ? QaActivityKind.success : QaActivityKind.error,
+        );
+      }
     } catch (error) {
-      _addMessage('Suite failed', error.toString(), QaActivityKind.error);
+      stopwatch.stop();
+      final errStr = error.toString();
+      final isAppQuit =
+          errStr.contains('Service has disappeared') ||
+          errStr.contains('112') ||
+          errStr.contains('SocketException') ||
+          errStr.contains('Closed');
+
+      setState(() {
+        _lastExecutionDuration = stopwatch.elapsed;
+        _lastExecutionPassed = false;
+        _wasAppClosedByUser = isAppQuit;
+        _lastExecutionDetails = isAppQuit
+            ? 'Application was quit during testing.'
+            : errStr;
+      });
+
+      if (isAppQuit) {
+        _addMessage(
+          'Suite Failed ❌',
+          'Failed at scenario "Auth Failure Handling".',
+          QaActivityKind.error,
+        );
+      } else {
+        _addMessage('Suite Error', errStr, QaActivityKind.error);
+      }
     } finally {
       await launched?.close();
-      if (mounted) setState(() => _running = false);
+      if (mounted) {
+        setState(() => _running = false);
+      }
     }
   }
 
@@ -146,191 +510,95 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   }
 
   @override
-  void dispose() {
-    _sshUser.dispose();
-    _sshHost.dispose();
-    _loginId.dispose();
-    _password.dispose();
-    super.dispose();
-  }
+  Widget build(BuildContext context) {
+    if (!_setupCompleted) {
+      return OnboardingSetupScreen(
+        initialTargetMode: _targetMode,
+        initialFlutterPath: _flutterPath,
+        initialAppRoot: _appRoot,
+        initialProfile: _profile,
+        initialLoginId: _loginId,
+        initialPassword: _password,
+        initialUnlockPin: _unlockPin,
+        onComplete: _onSetupComplete,
+      );
+    }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    body: Row(
-      children: <Widget>[
-        QaDashboardNavigation(
-          showTests: _showTests,
-          testsUnlocked: _testsUnlocked,
-          onSetup: () => setState(() => _showTests = false),
-          onTests: () => setState(() => _showTests = true),
-        ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Row(
-              children: <Widget>[
-                Expanded(
-                  flex: 6,
-                  child: _showTests ? _buildTests() : _buildSetup(),
-                ),
-                const SizedBox(width: 20),
-                Expanded(flex: 4, child: QaActivityPanel(messages: _messages)),
-              ],
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
+    final currentSuite = TestSuiteItem.availableSuites.firstWhere(
+      (s) => s.id == _selectedSuiteId,
+      orElse: () => TestSuiteItem.availableSuites.first,
+    );
 
-  Widget _buildSetup() => QaPanel(
-    title: 'Run configuration',
-    subtitle:
-        'Choose where the deterministic QA suite will run, then select the global PenguinPOS profile.',
-    child: ListView(
-      children: <Widget>[
-        const QaSectionTitle('Execution target'),
-        const SizedBox(height: 10),
-        SegmentedButton<QaTargetMode>(
-          segments: const <ButtonSegment<QaTargetMode>>[
-            ButtonSegment(
-              value: QaTargetMode.local,
-              label: Text('Local'),
-              icon: Icon(Icons.laptop_mac_outlined),
-            ),
-            ButtonSegment(
-              value: QaTargetMode.ssh,
-              label: Text('Via SSH'),
-              icon: Icon(Icons.terminal_outlined),
-            ),
-          ],
-          selected: <QaTargetMode>{_targetMode},
-          onSelectionChanged: (value) =>
-              setState(() => _targetMode = value.first),
-        ),
-        if (_targetMode == QaTargetMode.ssh) ...<Widget>[
-          const SizedBox(height: 20),
-          const QaSectionTitle('Saved SSH target'),
-          const SizedBox(height: 10),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: TextField(
-                  controller: _sshUser,
-                  decoration: const InputDecoration(
-                    labelText: 'Username',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _sshHost,
-                  decoration: const InputDecoration(
-                    labelText: 'IP address or SSH host alias',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-            ],
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: Row(
+        children: <Widget>[
+          // Side Navigation Bar matching mockup
+          SideNav(
+            suites: TestSuiteItem.availableSuites,
+            selectedSuiteId: _selectedSuiteId,
+            onSelectSuite: (id) => setState(() => _selectedSuiteId = id),
+            onOpenSetup: () => setState(() => _setupCompleted = false),
+            onOpenEditCredentials: _openEditCredentialsDialog,
+            onNewSuite: _openNewSuiteDialog,
+            onOpenSettings: _openSettingsDialog,
+            onOpenSupport: _openSupportDialog,
+            activeProfileLabel: _profile.label,
+            targetMode: _targetMode,
           ),
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text(
-              'Username and host are saved locally. Passwords and private keys are never stored by this GUI.',
+
+          // Main Suite Workspace & Activity Panel
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: <Widget>[
+                  // Suite Screen (LoginSuiteScreen)
+                  Expanded(
+                    flex: 6,
+                    child: LoginSuiteScreen(
+                      suite: currentSuite,
+                      currentProfile: _profile,
+                      loginId: _loginId,
+                      password: _password,
+                      targetMode: _targetMode,
+                      flutterPath: _flutterPath,
+                      appRoot: _appRoot,
+                      running: _running,
+                      lastExecutionPassed: _lastExecutionPassed,
+                      lastExecutionDuration: _lastExecutionDuration,
+                      lastExecutionDetails: _lastExecutionDetails,
+                      wasAppClosedByUser: _wasAppClosedByUser,
+                      scenariosCompleted: _scenariosCompletedSoFar,
+                      onProfileChanged: (newProfile) {
+                        setState(() => _profile = newProfile);
+                        _addMessage(
+                          'Setup Configured',
+                          'Target: Local Machine · Profile: ${newProfile.label}',
+                          QaActivityKind.success,
+                        );
+                      },
+                      onLoginIdChanged: (newId) =>
+                          setState(() => _loginId = newId),
+                      onPasswordChanged: (newPass) =>
+                          setState(() => _password = newPass),
+                      onRunSuite: _runSelectedSuite,
+                    ),
+                  ),
+
+                  const SizedBox(width: 16),
+
+                  // Real-time Activity Log Panel
+                  Expanded(
+                    flex: 4,
+                    child: QaActivityPanel(messages: _messages),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
-        const SizedBox(height: 28),
-        const QaSectionTitle('Global QA profile'),
-        const SizedBox(height: 6),
-        const Text('This setting applies to every suite in the run.'),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: QaProfile.values
-              .map(
-                (profile) => ChoiceChip(
-                  label: Text(profile.label),
-                  selected: _profile == profile,
-                  onSelected: (_) => setState(() => _profile = profile),
-                ),
-              )
-              .toList(),
-        ),
-        const SizedBox(height: 28),
-        FilledButton.icon(
-          onPressed: _saveConfiguration,
-          icon: const Icon(Icons.arrow_forward),
-          label: const Text('Continue to test cases'),
-        ),
-      ],
-    ),
-  );
-
-  Widget _buildTests() => QaPanel(
-    title: 'Test cases',
-    subtitle:
-        'Profile: ${_profile?.label ?? 'not selected'} · Target: ${_targetMode == QaTargetMode.local ? 'Local machine' : 'SSH target'}',
-    child: ListView(
-      children: <Widget>[
-        const QaSectionTitle('Login & terminal selection'),
-        const SizedBox(height: 6),
-        const Text(
-          'Runs fixed checks: empty credential validation, invalid credentials, valid login, terminal Continue, and home-screen navigation.',
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: TextField(
-                controller: _loginId,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Test login ID',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _password,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Test password',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Credentials are used only for this run and are never saved or displayed in the activity panel.',
-        ),
-        const SizedBox(height: 20),
-        FilledButton.icon(
-          onPressed: _running ? null : _runLoginSuite,
-          icon: _running
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.play_arrow),
-          label: Text(_running ? 'Processing…' : 'Run Login & Terminal suite'),
-        ),
-        if (_targetMode == QaTargetMode.ssh)
-          const Padding(
-            padding: EdgeInsets.only(top: 12),
-            child: Text(
-              'SSH configuration is ready, but its executor is intentionally deferred to the next phase.',
-            ),
-          ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }

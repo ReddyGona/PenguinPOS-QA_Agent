@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'models.dart';
+import 'package:penguin_pos_qa_agent/core/models.dart';
 
 enum _Section { none, steps, credentials, assertions }
 

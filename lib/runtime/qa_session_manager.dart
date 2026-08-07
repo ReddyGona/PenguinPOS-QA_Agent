@@ -2,8 +2,8 @@ import 'dart:io';
 import 'dart:collection';
 import 'dart:math';
 
-import 'app_launcher.dart';
-import 'qa_profile_config.dart';
+import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
+import 'package:penguin_pos_qa_agent/runtime/qa_profile_config.dart';
 
 class QaSession {
   const QaSession({

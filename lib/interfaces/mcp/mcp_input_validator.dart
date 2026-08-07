@@ -1,4 +1,4 @@
-import 'mcp_tool_definition.dart';
+import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_tool_definition.dart';
 
 /// Validates provided tool arguments against a tool's JSON Schema definition.
 class McpInputValidator {

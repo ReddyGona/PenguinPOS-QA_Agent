@@ -1,4 +1,4 @@
-import 'models.dart';
+import 'package:penguin_pos_qa_agent/core/models.dart';
 
 /// Pass/Fail/Skip status enum for steps and scenarios.
 enum ResultStatus { passed, failed, skipped }

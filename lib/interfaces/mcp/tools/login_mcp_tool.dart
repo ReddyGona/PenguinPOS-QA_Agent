@@ -1,10 +1,10 @@
-import '../../../automation/login/login_runner.dart';
-import '../../../automation/login/login_scenario.dart';
-import '../../../core/execution_speed.dart';
-import '../../../runtime/qa_session_manager.dart';
-import '../mcp_feature_tool.dart';
-import '../mcp_tool_definition.dart';
-import '../mcp_tool_result.dart';
+import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
+import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
+import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
+import 'package:penguin_pos_qa_agent/runtime/qa_session_manager.dart';
+import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_feature_tool.dart';
+import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_tool_definition.dart';
+import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_tool_result.dart';
 
 /// Starts a reusable PenguinPOS QA session. It contains no credentials.
 class StartLoginQaSessionTool implements McpFeatureTool {
@@ -91,6 +91,11 @@ class LoginFeatureTool implements McpFeatureTool {
           'type': 'string',
           'description': 'Test password. Never returned.',
         },
+        'unlock_pin': <String, Object?>{
+          'type': 'string',
+          'description':
+              'Terminal idle-lock PIN. Required only when the attached app opens with an active idle lock. Never returned.',
+        },
         'check_all_scenarios': <String, Object?>{
           'type': 'boolean',
           'default': true,
@@ -141,6 +146,7 @@ class LoginFeatureTool implements McpFeatureTool {
         name: 'Valid PenguinPOS login',
         loginId: loginId,
         password: arguments['password'] as String,
+        unlockPin: arguments['unlock_pin'] as String?,
       );
 
       final result = checkAllScenarios

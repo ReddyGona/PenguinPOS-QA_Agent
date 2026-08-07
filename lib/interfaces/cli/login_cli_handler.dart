@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../../automation/login/login_runner.dart';
-import '../../automation/login/login_scenario.dart';
-import '../../core/execution_speed.dart';
-import '../../runtime/app_launcher.dart';
+import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
+import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
+import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
+import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
 
 /// Handler encapsulating command-line arguments parsing, interactive stdin fallback, and test execution for login CLI subcommands.
 class LoginCliHandler {
@@ -13,6 +13,8 @@ class LoginCliHandler {
     final rawUri = values['vm-service-uri'];
     var loginId = values['login-id'];
     var password = values['password'];
+    final unlockPin =
+        values['unlock-pin'] ?? Platform.environment['PENGUIN_POS_UNLOCK_PIN'];
     var appRoot =
         values['app-root'] ??
         Platform.environment['PENGUIN_POS_ROOT'] ??
@@ -23,13 +25,15 @@ class LoginCliHandler {
 
     final mode = values['mode'] ?? 'full';
     final rawSpeed = values['speed'];
-    final rawDelayMs =
-        values['delay-ms'] != null ? int.tryParse(values['delay-ms']!) : null;
+    final rawDelayMs = values['delay-ms'] != null
+        ? int.tryParse(values['delay-ms']!)
+        : null;
     final speedPreset = SpeedPreset.parse(rawSpeed);
     final executionSpeed = ExecutionSpeed(
       preset: speedPreset,
-      customDelay:
-          rawDelayMs != null ? Duration(milliseconds: rawDelayMs) : null,
+      customDelay: rawDelayMs != null
+          ? Duration(milliseconds: rawDelayMs)
+          : null,
     );
 
     if (loginId == null || loginId.trim().isEmpty) {
@@ -79,15 +83,12 @@ class LoginCliHandler {
         name: 'Valid PenguinPOS login',
         loginId: loginId,
         password: password,
+        unlockPin: unlockPin,
       );
 
       final runner = PenguinPosLoginRunner();
       final result = mode == 'single'
-          ? await runner.run(
-              scenario,
-              vmServiceUri: uri,
-              speed: executionSpeed,
-            )
+          ? await runner.run(scenario, vmServiceUri: uri, speed: executionSpeed)
           : await runner.runFullSequence(
               scenario,
               vmServiceUri: uri,

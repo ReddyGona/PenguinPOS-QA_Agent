@@ -12,10 +12,7 @@ void main() {
       expect(scenario.id, equals('valid_login'));
       expect(scenario.tags, containsAll(<String>['smoke', 'login', 'qa']));
       expect(scenario.steps, isNotEmpty);
-      expect(
-        scenario.steps.first.action,
-        equals(StepAction.inspectWidgetTree),
-      );
+      expect(scenario.steps.first.action, equals(StepAction.inspectWidgetTree));
     });
 
     test('parses invalid_credentials scenario file', () async {
