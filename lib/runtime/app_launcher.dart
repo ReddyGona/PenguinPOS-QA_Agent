@@ -49,18 +49,54 @@ class PenguinPosAppLauncher {
       process.stderr.transform(utf8.decoder).transform(const LineSplitter()),
     ]);
     final expression = RegExp(r'https?://[^\s]+');
-    await for (final line in lines.timeout(const Duration(minutes: 2))) {
-      final match = expression.firstMatch(line);
-      if (match == null) continue;
-      final uriString = match.group(0)!;
-      if (line.toLowerCase().contains('vm service') ||
-          line.contains('is available at:')) {
-        return Uri.parse(uriString);
-      }
-    }
-    throw StateError(
-      'PenguinPOS exited before publishing a Dart VM service URI.',
+    final serviceUri = Completer<Uri>();
+    late final StreamSubscription<String> outputSubscription;
+
+    outputSubscription = lines.listen(
+      (line) {
+        // Keep application logs private by forwarding only explicit QA traces.
+        if (line.startsWith('[PenguinPOS]') || line.startsWith('[IdleLock]')) {
+          stderr.writeln('[PenguinPOS app] $line');
+        }
+
+        if (serviceUri.isCompleted) return;
+        final match = expression.firstMatch(line);
+        if (match == null) return;
+        if (line.toLowerCase().contains('vm service') ||
+            line.contains('is available at:')) {
+          serviceUri.complete(Uri.parse(match.group(0)!));
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!serviceUri.isCompleted) {
+          serviceUri.completeError(error, stackTrace);
+        }
+      },
+      onDone: () {
+        if (!serviceUri.isCompleted) {
+          serviceUri.completeError(
+            StateError(
+              'PenguinPOS exited before publishing a Dart VM service URI.',
+            ),
+          );
+        }
+      },
     );
+
+    try {
+      return await serviceUri.future.timeout(
+        const Duration(minutes: 2),
+        onTimeout: () {
+          outputSubscription.cancel();
+          throw TimeoutException(
+            'Timed out waiting for PenguinPOS to publish a Dart VM service URI.',
+          );
+        },
+      );
+    } catch (_) {
+      await outputSubscription.cancel();
+      rethrow;
+    }
   }
 }
 
@@ -72,14 +108,18 @@ class LaunchedPenguinPos {
   final Uri vmServiceUri;
 
   Future<void> close() async {
-    process.kill(ProcessSignal.sigint);
-    await process.exitCode.timeout(
-      const Duration(seconds: 10),
-      onTimeout: () {
-        process.kill();
-        return -1;
-      },
-    );
+    try {
+      process.kill(ProcessSignal.sigint);
+      await process.exitCode.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          try {
+            process.kill(ProcessSignal.sigkill);
+          } catch (_) {}
+          return -1;
+        },
+      );
+    } catch (_) {}
   }
 }
 

@@ -80,20 +80,62 @@ class TestSuiteItem {
       ],
     ),
     TestSuiteItem(
-      id: 'api_regression',
-      title: 'API Regression',
-      description: 'Executes automated API integration & endpoint contract validation suites.',
-      icon: Icons.alt_route_rounded,
-      isImplemented: false,
-      scenarios: <TestSuiteScenario>[],
+      id: 'order_checkout',
+      title: 'Order & Cash Payment',
+      description:
+          'Executes complete end-to-end POS order creation, SKU scanning, weighed item entry, cart update, cash payment round-off, and order success wrap-up.',
+      icon: Icons.shopping_cart_checkout_rounded,
+      isImplemented: true,
+      scenarios: <TestSuiteScenario>[
+        TestSuiteScenario(
+          id: 'start_sale_customer',
+          name: 'Start Sale & Customer Handling',
+          tags: <String>['sale', 'order'],
+          stepsDescription: <String>[
+            'Verify Order Screen (order.screen) is active',
+            'If Start Sale Widget (order.sale.start) is visible, tap Continue Without Customer (sale.continuewithoutcustomer)',
+            'Verify Order Table (order.table) and NumPad Section (order.numpad.section) are displayed',
+          ],
+        ),
+        TestSuiteScenario(
+          id: 'sku_cart_addition',
+          name: 'SKU & Weighed Item Entry',
+          tags: <String>['cart', 'sku'],
+          stepsDescription: <String>[
+            'Enter SKU code into Input Code field (order.numpad.input.code)',
+            'If field switches to Input Weight (order.numpad.input.weight), enter weight amount and tap Enter',
+            'Repeat for all test SKU items',
+          ],
+        ),
+        TestSuiteScenario(
+          id: 'cash_payment_checkout',
+          name: 'Cash Payment & Round-Off',
+          tags: <String>['payment', 'cash'],
+          stepsDescription: <String>[
+            'Tap Update Cart (order.update_cart) until Proceed To Pay (order.proceed_to_pay) is active',
+            'Tap Proceed To Pay and navigate to Payment Screen (payment.screen)',
+            'Read Total Payable (bill_summary.total_payable) and compute round-off payable amount',
+            'Select Cash Payment (payment.cash), enter payableAmount via numpad, and tap Place Order (payment.place_order)',
+            'Verify Order Success Screen (order.success.screen) and tap Done to complete order flow',
+          ],
+        ),
+      ],
     ),
-    TestSuiteItem(
-      id: 'e2e_smoke',
-      title: 'E2E Smoke Tests',
-      description: 'Executes end-to-end multi-terminal POS smoke test workflows.',
-      icon: Icons.speed_rounded,
-      isImplemented: false,
-      scenarios: <TestSuiteScenario>[],
-    ),
+    // TestSuiteItem(
+    //   id: 'api_regression',
+    //   title: 'API Regression',
+    //   description: 'Executes automated API integration & endpoint contract validation suites.',
+    //   icon: Icons.alt_route_rounded,
+    //   isImplemented: false,
+    //   scenarios: <TestSuiteScenario>[],
+    // ),
+    // TestSuiteItem(
+    //   id: 'e2e_smoke',
+    //   title: 'E2E Smoke Tests',
+    //   description: 'Executes end-to-end multi-terminal POS smoke test workflows.',
+    //   icon: Icons.speed_rounded,
+    //   isImplemented: false,
+    //   scenarios: <TestSuiteScenario>[],
+    // ),
   ];
 }

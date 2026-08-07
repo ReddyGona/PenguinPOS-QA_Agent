@@ -23,24 +23,24 @@ class QaActivityPanel extends StatelessWidget {
 
                 final (color, iconData, nodeBg) = switch (message.kind) {
                   QaActivityKind.success => (
-                      const Color(0xFF16A34A),
-                      Icons.check_circle_outline_rounded,
-                      const Color(0xFFF0FDF4)
-                    ),
+                    const Color(0xFF16A34A),
+                    Icons.check_circle_outline_rounded,
+                    const Color(0xFFF0FDF4),
+                  ),
                   QaActivityKind.error => (
-                      const Color(0xFFDC2626),
-                      Icons.cancel_outlined,
-                      const Color(0xFFFEF2F2)
-                    ),
+                    const Color(0xFFDC2626),
+                    Icons.cancel_outlined,
+                    const Color(0xFFFEF2F2),
+                  ),
                   QaActivityKind.info => (
-                      message.title.toLowerCase().contains('processing')
-                          ? const Color(0xFF2563EB)
-                          : const Color(0xFF2563EB),
-                      message.title.toLowerCase().contains('processing')
-                          ? Icons.sync_rounded
-                          : Icons.outlined_flag_rounded,
-                      const Color(0xFFEFF6FF)
-                    ),
+                    message.title.toLowerCase().contains('processing')
+                        ? const Color(0xFF2563EB)
+                        : const Color(0xFF2563EB),
+                    message.title.toLowerCase().contains('processing')
+                        ? Icons.sync_rounded
+                        : Icons.outlined_flag_rounded,
+                    const Color(0xFFEFF6FF),
+                  ),
                 };
 
                 return IntrinsicHeight(
@@ -58,7 +58,10 @@ class QaActivityPanel extends StatelessWidget {
                               decoration: BoxDecoration(
                                 color: nodeBg,
                                 shape: BoxShape.circle,
-                                border: Border.all(color: color.withValues(alpha: 0.3), width: 1.5),
+                                border: Border.all(
+                                  color: color.withValues(alpha: 0.3),
+                                  width: 1.5,
+                                ),
                               ),
                               child: Icon(iconData, color: color, size: 16),
                             ),
