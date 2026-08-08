@@ -1,6 +1,89 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+/// The active slash-command fragment immediately before the text cursor.
+///
+/// A slash command may appear anywhere in a sentence, but it must start at a
+/// token boundary. For example, `run /login in stage` is valid whereas
+/// `run/login` is not treated as a command.
+@immutable
+class SlashCommandQuery {
+  const SlashCommandQuery({
+    required this.start,
+    required this.end,
+    required this.text,
+  });
+
+  final int start;
+  final int end;
+  final String text;
+}
+
+/// Finds the slash-command fragment nearest the current cursor position.
+///
+/// The composer uses this instead of looking only at the beginning of the
+/// message so users can write naturally, such as `please run /login`.
+SlashCommandQuery? slashCommandQueryAtCursor(TextEditingValue value) {
+  final text = value.text;
+  final cursor = value.selection.extentOffset.clamp(0, text.length).toInt();
+  if (cursor == 0) return null;
+
+  final slash = text.substring(0, cursor).lastIndexOf('/');
+  if (slash == -1 ||
+      (slash > 0 && _isSlashCommandTokenCharacter(text[slash - 1]))) {
+    return null;
+  }
+
+  final query = text.substring(slash, cursor);
+  if (query.contains(RegExp(r'\s'))) return null;
+
+  return SlashCommandQuery(start: slash, end: cursor, text: query);
+}
+
+/// Replaces the active slash fragment with [command] while preserving the
+/// complete surrounding message and keeping the cursor after the insertion.
+TextEditingValue? insertSlashCommandAtCursor(
+  TextEditingValue value,
+  String command,
+) {
+  final query = slashCommandQueryAtCursor(value);
+  if (query == null) return null;
+
+  final text = value.text.replaceRange(query.start, query.end, command);
+  final cursor = query.start + command.length;
+  return value.copyWith(
+    text: text,
+    selection: TextSelection.collapsed(offset: cursor),
+    composing: TextRange.empty,
+  );
+}
+
+/// Inserts a standalone slash trigger at the cursor for the attachment/menu
+/// button. A separating space is added when necessary so the trigger remains
+/// a valid command token.
+TextEditingValue insertSlashTriggerAtCursor(TextEditingValue value) {
+  final text = value.text;
+  final selection = value.selection;
+  final start = selection.start.clamp(0, text.length).toInt();
+  final end = selection.end.clamp(0, text.length).toInt();
+  final before = text.substring(0, start);
+  final needsSpace =
+      before.isNotEmpty &&
+      _isSlashCommandTokenCharacter(before[before.length - 1]);
+  final insertion = needsSpace ? ' /' : '/';
+  final updatedText = text.replaceRange(start, end, insertion);
+  final cursor = start + insertion.length;
+
+  return value.copyWith(
+    text: updatedText,
+    selection: TextSelection.collapsed(offset: cursor),
+    composing: TextRange.empty,
+  );
+}
+
+bool _isSlashCommandTokenCharacter(String character) =>
+    RegExp(r'[A-Za-z0-9_-]').hasMatch(character);
+
 /// Rounded 18px Composer section with floating slash popup, attachment icon, text input, circular send button, and helper note.
 class AssistantComposer extends StatelessWidget {
   const AssistantComposer({
@@ -13,6 +96,7 @@ class AssistantComposer extends StatelessWidget {
     required this.slashSelectedIndex,
     required this.onSelectSlashCommand,
     required this.onSlashSelectedIndexChanged,
+    required this.onOpenSlashMenu,
     required this.onSend,
   });
 
@@ -24,11 +108,15 @@ class AssistantComposer extends StatelessWidget {
   final int slashSelectedIndex;
   final ValueChanged<String> onSelectSlashCommand;
   final ValueChanged<int> onSlashSelectedIndexChanged;
+  final VoidCallback onOpenSlashMenu;
   final VoidCallback onSend;
 
   @override
   Widget build(BuildContext context) {
     final showPopup = filteredSlashCommands.isNotEmpty;
+    final safeSelectedIndex = showPopup
+        ? slashSelectedIndex.clamp(0, filteredSlashCommands.length - 1).toInt()
+        : 0;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -43,7 +131,7 @@ class AssistantComposer extends StatelessWidget {
                 bottom: 64,
                 child: _SlashPopup(
                   commands: filteredSlashCommands,
-                  selectedIndex: slashSelectedIndex,
+                  selectedIndex: safeSelectedIndex,
                   onSelectCommand: onSelectSlashCommand,
                 ),
               ),
@@ -67,9 +155,7 @@ class AssistantComposer extends StatelessWidget {
                   children: <Widget>[
                     IconButton(
                       tooltip: 'Attach scenario spec / open slash menu',
-                      onPressed: waiting || running
-                          ? null
-                          : () => onSelectSlashCommand('/'),
+                      onPressed: waiting || running ? null : onOpenSlashMenu,
                       icon: const Icon(
                         Icons.attach_file_rounded,
                         size: 20,
@@ -100,7 +186,7 @@ class AssistantComposer extends StatelessWidget {
                                     LogicalKeyboardKey.tab ||
                                 event.logicalKey == LogicalKeyboardKey.enter) {
                               onSelectSlashCommand(
-                                filteredSlashCommands[slashSelectedIndex],
+                                filteredSlashCommands[safeSelectedIndex],
                               );
                               return KeyEventResult.handled;
                             }
@@ -111,7 +197,6 @@ class AssistantComposer extends StatelessWidget {
                           controller: inputController,
                           focusNode: focusNode,
                           enabled: !waiting && !running,
-                          onChanged: (_) => onSlashSelectedIndexChanged(0),
                           onSubmitted: (_) => onSend(),
                           maxLines: 5,
                           minLines: 1,

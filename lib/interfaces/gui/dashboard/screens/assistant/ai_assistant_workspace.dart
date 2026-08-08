@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
@@ -16,6 +17,9 @@ class AiAssistantWorkspace extends StatefulWidget {
     required this.activeProfile,
     required this.modelConfigured,
     required this.running,
+    required this.messages,
+    required this.onAddMessage,
+    this.onTruncateMessages,
     required this.activityMessages,
     required this.executionSteps,
     required this.executionSuiteTitle,
@@ -24,13 +28,19 @@ class AiAssistantWorkspace extends StatefulWidget {
     required this.onRunPlan,
     required this.onOpenSettings,
     required this.onExitAiMode,
-    this.onRegisterAddMessage,
+    this.showActivityDetails = false,
+    this.onPlanningStateChanged,
   });
 
   final List<QaProfile> profiles;
   final QaProfile activeProfile;
   final bool modelConfigured;
   final bool running;
+  final bool showActivityDetails;
+  final List<AiChatMessage> messages;
+  final ValueChanged<AiChatMessage> onAddMessage;
+  final ValueChanged<int>? onTruncateMessages;
+  final ValueChanged<bool>? onPlanningStateChanged;
   final List<QaActivityMessage> activityMessages;
 
   /// Live execution progress steps pushed from the dashboard during test runs.
@@ -48,17 +58,11 @@ class AiAssistantWorkspace extends StatefulWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onExitAiMode;
 
-  /// Called once during initState so the parent can capture a reference to
-  /// [addRichMessage] without needing a GlobalKey to the private state.
-  final void Function(void Function(AiChatMessage message) addMessage)?
-  onRegisterAddMessage;
-
   @override
   State<AiAssistantWorkspace> createState() => _AiAssistantWorkspaceState();
 }
 
 class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
-  final List<AiChatMessage> _messages = <AiChatMessage>[];
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
@@ -68,11 +72,25 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
   final List<AiModelEvent> _modelEvents = <AiModelEvent>[];
   DateTime? _lastReasoningRefresh;
   int _slashSelectedIndex = 0;
+  String? _lastSlashQuery;
+  TextEditingValue? _dismissedSlashPopupValue;
+
+  List<AiModelEvent> get _visiblePlanningEvents {
+    if (widget.showActivityDetails) return _modelEvents;
+    final errors = _modelEvents.where((e) => e.kind == AiModelEventKind.error);
+    if (errors.isNotEmpty) return errors.toList();
+    return const <AiModelEvent>[
+      AiModelEvent(
+        kind: AiModelEventKind.status,
+        message: 'Preparing test plan…',
+      ),
+    ];
+  }
 
   @override
   void initState() {
     super.initState();
-    widget.onRegisterAddMessage?.call(addRichMessage);
+    _inputController.addListener(_onComposerValueChanged);
   }
 
   static const List<String> _knownSlashCommands = <String>[
@@ -85,6 +103,7 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
 
   @override
   void dispose() {
+    _inputController.removeListener(_onComposerValueChanged);
     _inputController.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -92,15 +111,60 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
   }
 
   List<String> get _filteredSlashCommands {
-    final text = _inputController.text;
-    if (!text.startsWith('/')) return const <String>[];
-    final query = text.toLowerCase();
+    final value = _inputController.value;
+    if (_dismissedSlashPopupValue == value) return const <String>[];
+    final query = slashCommandQueryAtCursor(value)?.text.toLowerCase();
+    if (query == null) return const <String>[];
     return _knownSlashCommands
         .where((cmd) => cmd.toLowerCase().startsWith(query))
         .toList();
   }
 
-  void _applySlashCommand(String command) {
+  /// Keeps slash suggestions aligned with edits and cursor movement, including
+  /// when the user moves back into a slash command in the middle of a message.
+  void _onComposerValueChanged() {
+    final value = _inputController.value;
+    if (_dismissedSlashPopupValue != null &&
+        _dismissedSlashPopupValue != value) {
+      _dismissedSlashPopupValue = null;
+    }
+
+    final query = slashCommandQueryAtCursor(value);
+    final nextQuery = query == null
+        ? null
+        : '${query.start}:${query.end}:${query.text.toLowerCase()}';
+    if (nextQuery == _lastSlashQuery) return;
+
+    _lastSlashQuery = nextQuery;
+    if (mounted) {
+      setState(() => _slashSelectedIndex = 0);
+    }
+  }
+
+  /// Inserts a slash command into the user's current sentence. Selection from
+  /// the popup is intentionally non-destructive and never submits the input.
+  void _insertSlashCommand(String command) {
+    final updated = insertSlashCommandAtCursor(_inputController.value, command);
+    if (updated == null) return;
+
+    _inputController.value = updated;
+    _dismissedSlashPopupValue = updated;
+    setState(() => _slashSelectedIndex = 0);
+    _focusNode.requestFocus();
+  }
+
+  void _openSlashMenu() {
+    final updated = insertSlashTriggerAtCursor(_inputController.value);
+    _inputController.value = updated;
+    _dismissedSlashPopupValue = null;
+    _lastSlashQuery = null;
+    setState(() => _slashSelectedIndex = 0);
+    _focusNode.requestFocus();
+  }
+
+  /// Welcome-canvas buttons are explicit shortcuts, unlike composer slash
+  /// selections, and retain their existing direct action behavior.
+  void _runBentoAction(String command) {
     if (command == '/settings') {
       _inputController.clear();
       widget.onOpenSettings();
@@ -121,9 +185,9 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
   Future<void> _send() async {
     final text = _inputController.text.trim();
     if (text.isEmpty || _waiting || widget.running) return;
+    final startedAt = DateTime.now();
 
     setState(() {
-      _messages.add(AiChatMessage(role: AiChatRole.user, text: text));
       _inputController.clear();
       _waiting = true;
       _slashSelectedIndex = 0;
@@ -131,52 +195,70 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
       _lastReasoningRefresh = null;
     });
 
+    widget.onPlanningStateChanged?.call(true);
+    widget.onAddMessage(AiChatMessage(role: AiChatRole.user, text: text));
     _scrollToBottom();
 
     try {
-      final response = await widget.onSend(text, _messages, _onModelEvent);
+      final response = await widget.onSend(
+        text,
+        widget.messages,
+        _onModelEvent,
+      );
       if (!mounted) return;
       final plan = response.plan;
-      final shouldAutoRun =
-          plan != null && response.state == AiPlanState.readyForConfirmation;
+      final shouldAutoRun = response.canExecute;
       final planningSteps = _modelEvents
           .where((event) => event.kind == AiModelEventKind.status)
           .map((event) => event.message)
           .toSet()
           .toList(growable: false);
-      setState(() {
-        _messages.add(
-          AiChatMessage(
-            role: AiChatRole.assistant,
-            text: shouldAutoRun
-                ? '${response.message}\n\nValidated for ${plan.profileId}. Starting execution…'
-                : response.message,
-            richContent: planningSteps.isEmpty
-                ? null
-                : AiRichPlanningSummary(steps: planningSteps),
-          ),
-        );
-        _waiting = false;
-        // Planning is a transient chat activity, not a permanent panel or a
-        // transcript of model reasoning.
-        _modelEvents.clear();
-      });
-      _scrollToBottom();
-      if (shouldAutoRun) widget.onRunPlan(plan);
+      final activitySummary =
+          (widget.showActivityDetails && planningSteps.isNotEmpty)
+          ? AiRichPlanningSummary(
+              steps: planningSteps,
+              elapsedMs: DateTime.now().difference(startedAt).inMilliseconds,
+            )
+          : null;
+
+      widget.onAddMessage(
+        AiChatMessage(
+          role: AiChatRole.assistant,
+          text: shouldAutoRun
+              ? '${response.message}\n\nPlan validated for ${plan!.profileId}. Running preflight checks…'
+              : response.message,
+          richContent:
+              response.richContent ??
+              (response.knowledge == null
+                  ? null
+                  : AiRichKnowledgeAnswer(answer: response.knowledge!)),
+          activitySummary: activitySummary,
+          pendingRequest: response.pendingRequest,
+        ),
+      );
+
+      if (shouldAutoRun) widget.onRunPlan(plan!);
     } catch (e) {
+      if (e is OperationCanceledException) {
+        return;
+      }
       if (!mounted) return;
-      setState(() {
-        _messages.add(
-          AiChatMessage(
-            role: AiChatRole.assistant,
-            text:
-                'I could not prepare a safe test plan. Please try again with the target and required test details.',
-          ),
-        );
-        _waiting = false;
-        _modelEvents.clear();
-      });
-      _scrollToBottom();
+      widget.onAddMessage(
+        AiChatMessage(
+          role: AiChatRole.assistant,
+          text:
+              'I could not prepare a safe test plan. Please try again with the target and required test details.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _waiting = false;
+          _modelEvents.clear();
+        });
+        _scrollToBottom();
+      }
+      widget.onPlanningStateChanged?.call(false);
     }
   }
 
@@ -209,12 +291,45 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
     }
   }
 
-  /// Called by the parent dashboard to inject a rich report message into the
-  /// chat when test execution finishes.
-  void addRichMessage(AiChatMessage message) {
-    if (!mounted) return;
-    setState(() => _messages.add(message));
-    _scrollToBottom();
+  void _handleCopyText(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Copied to clipboard'),
+        duration: Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _handleEditAndRetrigger(int index, String newText) {
+    if (_waiting || widget.running) return;
+    widget.onTruncateMessages?.call(index);
+    _inputController.text = newText;
+    _send();
+  }
+
+  void _handleRetrigger(int index) {
+    if (_waiting ||
+        widget.running ||
+        index < 0 ||
+        index >= widget.messages.length)
+      return;
+    int targetIndex = index;
+    if (widget.messages[index].role != AiChatRole.user) {
+      for (int i = index - 1; i >= 0; i--) {
+        if (widget.messages[i].role == AiChatRole.user) {
+          targetIndex = i;
+          break;
+        }
+      }
+    }
+    if (targetIndex < 0 || targetIndex >= widget.messages.length) return;
+    final promptText = widget.messages[targetIndex].text;
+    widget.onTruncateMessages?.call(targetIndex);
+    _inputController.text = promptText;
+    _send();
   }
 
   void _scrollToBottom() {
@@ -231,7 +346,7 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
 
   @override
   Widget build(BuildContext context) {
-    final hasMessages = _messages.isNotEmpty;
+    final hasMessages = widget.messages.isNotEmpty;
 
     return Column(
       children: <Widget>[
@@ -254,18 +369,21 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
                     Expanded(
                       child: hasMessages
                           ? AssistantMessageList(
-                              messages: _messages,
+                              messages: widget.messages,
                               scrollController: _scrollController,
-                              planningEvents: _modelEvents,
+                              planningEvents: _visiblePlanningEvents,
                               planningRunning: _waiting,
                               executionSteps: widget.executionSteps,
                               executionSuiteTitle: widget.executionSuiteTitle,
                               executionProfileLabel:
                                   widget.executionProfileLabel,
                               executionRunning: widget.running,
+                              onCopyText: _handleCopyText,
+                              onEditAndRetrigger: _handleEditAndRetrigger,
+                              onRetrigger: _handleRetrigger,
                             )
                           : AssistantWelcomeCanvas(
-                              onSelectBentoAction: _applySlashCommand,
+                              onSelectBentoAction: _runBentoAction,
                             ),
                     ),
 
@@ -279,10 +397,11 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
                         running: widget.running,
                         filteredSlashCommands: _filteredSlashCommands,
                         slashSelectedIndex: _slashSelectedIndex,
-                        onSelectSlashCommand: _applySlashCommand,
+                        onSelectSlashCommand: _insertSlashCommand,
                         onSlashSelectedIndexChanged: (idx) {
                           setState(() => _slashSelectedIndex = idx);
                         },
+                        onOpenSlashMenu: _openSlashMenu,
                         onSend: _send,
                       ),
                     ),

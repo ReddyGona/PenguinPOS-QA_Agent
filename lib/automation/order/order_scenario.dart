@@ -367,9 +367,8 @@ class OrderScenario {
   Map<String, Object?> toJson() => <String, Object?>{
     'id': id,
     'name': name,
-    if (loginId != null) 'loginId': loginId,
-    if (password != null) 'password': password,
-    if (unlockPin != null) 'unlockPin': unlockPin,
+    // Credentials are runtime-only inputs from the secure vault. Scenario
+    // exports can be attached to reports, so they must never contain secrets.
     'items': items.map((i) => i.toJson()).toList(),
     'ordersCount': ordersCount,
     'inputSourceMode': inputSourceMode.name,

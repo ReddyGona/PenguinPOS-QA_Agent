@@ -6,6 +6,7 @@ abstract interface class AiModelProvider {
   Future<String> completeJson({
     required String systemPrompt,
     required List<AiChatMessage> messages,
+    CancellationToken? cancelToken,
     AiModelEventCallback? onEvent,
   });
 }

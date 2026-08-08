@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_ui_tokens.dart';
 
-/// Collapsed, user-facing summary of planning and validation work.
-///
-/// It deliberately contains only safe activity labels, never private model
-/// reasoning or hidden instructions.
+/// A small, expandable transcript of safe application preparation activity.
+/// It is intentionally text-first so completed activity remains part of the
+/// chat conversation instead of becoming a dashboard-style card.
 class AssistantPlanningSummaryCard extends StatefulWidget {
   const AssistantPlanningSummaryCard({super.key, required this.summary});
 
@@ -23,104 +22,108 @@ class _AssistantPlanningSummaryCardState
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: AssistantUiTokens.subtleSurface,
-        borderRadius: AssistantUiTokens.compactRadius,
-        border: Border.all(color: AssistantUiTokens.subtleBorder),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          InkWell(
-            borderRadius: AssistantUiTokens.compactRadius,
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              child: Row(
-                children: <Widget>[
-                  const Icon(
-                    Icons.manage_search_rounded,
-                    size: 16,
-                    color: AssistantUiTokens.accent,
+    final stepCount = widget.summary.steps.length;
+    final elapsedLabel = _formatElapsed(widget.summary.elapsedMs);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        InkWell(
+          borderRadius: BorderRadius.circular(5),
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const Icon(
+                  Icons.check_circle_outline_rounded,
+                  size: 15,
+                  color: AssistantUiTokens.accent,
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  elapsedLabel == null
+                      ? 'Preparation activity · $stepCount checks'
+                      : 'Worked for $elapsedLabel · $stepCount checks',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AssistantUiTokens.secondaryText,
                   ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Planning details',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AssistantUiTokens.text,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    '${widget.summary.steps.length} steps',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AssistantUiTokens.mutedText,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(
-                    _expanded
-                        ? Icons.keyboard_arrow_up_rounded
-                        : Icons.keyboard_arrow_down_rounded,
-                    color: AssistantUiTokens.mutedText,
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 3),
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  size: 17,
+                  color: AssistantUiTokens.mutedText,
+                ),
+              ],
             ),
           ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeInOut,
-            child: _expanded
-                ? Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 11),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        for (final step in widget.summary.steps)
-                          _PlanningStepRow(label: step),
-                      ],
-                    ),
-                  )
-                : const SizedBox(width: double.infinity),
-          ),
-        ],
-      ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeInOut,
+          child: _expanded
+              ? Padding(
+                  padding: const EdgeInsets.only(left: 4, top: 3, bottom: 5),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      for (final entry in widget.summary.steps.indexed)
+                        _PlanningStepLine(
+                          label: entry.$2,
+                          failed: widget.summary.failedStep == entry.$1,
+                        ),
+                    ],
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+      ],
     );
+  }
+
+  String? _formatElapsed(int? elapsedMs) {
+    if (elapsedMs == null || elapsedMs < 0) return null;
+    if (elapsedMs < 1000) return '<1s';
+    final totalSeconds = (elapsedMs / 1000).round();
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return minutes == 0 ? '${seconds}s' : '${minutes}m ${seconds}s';
   }
 }
 
-class _PlanningStepRow extends StatelessWidget {
-  const _PlanningStepRow({required this.label});
+class _PlanningStepLine extends StatelessWidget {
+  const _PlanningStepLine({required this.label, this.failed = false});
 
   final String label;
+  final bool failed;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 7),
+      padding: const EdgeInsets.only(top: 5),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          const Icon(
-            Icons.check_circle_outline_rounded,
+          Icon(
+            failed ? Icons.error_outline_rounded : Icons.check_rounded,
             size: 14,
-            color: AssistantUiTokens.success,
+            color: failed ? AssistantUiTokens.error : AssistantUiTokens.accent,
           ),
           const SizedBox(width: 7),
-          Expanded(
+          Flexible(
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11.5,
                 height: 1.35,
-                color: AssistantUiTokens.secondaryText,
+                color: failed
+                    ? AssistantUiTokens.error
+                    : AssistantUiTokens.mutedText,
               ),
             ),
           ),

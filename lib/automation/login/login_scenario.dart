@@ -24,4 +24,13 @@ class LoginScenario {
   final String? unlockPin;
   final String terminalContinueKey;
   final String expectedKey;
+
+  /// Safe scenario metadata for diagnostics. Login credentials and the
+  /// terminal unlock PIN intentionally remain runtime-only.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'name': name,
+    'terminalContinueKey': terminalContinueKey,
+    'expectedKey': expectedKey,
+  };
 }

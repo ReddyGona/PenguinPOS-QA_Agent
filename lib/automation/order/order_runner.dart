@@ -6,6 +6,7 @@ import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
 import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
+import 'package:penguin_pos_qa_agent/core/secret_redactor.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
 
 /// Telemetry metrics for intercepted API calls.
@@ -152,14 +153,18 @@ class PenguinPosOrderRunner {
       await engine.connect(vmServiceUri, timeout: timeout);
       emit('Driver Connected', 'Connected to PenguinPOS Flutter Driver.');
 
-      // Step 1 & 2: Initial App state probe (Login, Idle Lock, Home, Order Screen)
+      // Step 1 & 2: Initial App state probe (Order Screen, Home, Login)
+      _trace('Probing initial UI state (orderScreen, homeScreen, loginId)...');
+      final probeStart = DateTime.now();
       final initialState = await engine.waitForAnyKey(<String>[
         PenguinPosOrderKeys.orderScreen,
         PenguinPosLoginKeys.homeScreen,
-        PenguinPosLoginKeys.idleWidget,
         PenguinPosLoginKeys.loginId,
       ], timeout: timeout);
-
+      final probeDuration = DateTime.now().difference(probeStart);
+      _trace(
+        'Initial UI state probed in ${probeDuration.inMilliseconds}ms: "$initialState"',
+      );
       if (initialState == PenguinPosLoginKeys.loginId) {
         final loginId = scenario.loginId;
         final password = scenario.password;
@@ -193,40 +198,6 @@ class PenguinPosOrderRunner {
         emit(
           'Login Completed',
           'Logged in and continued through terminal selection.',
-        );
-      }
-
-      final isIdleLockActive = await engine.hasKey(
-        PenguinPosLoginKeys.idleWidget,
-        timeout: const Duration(seconds: 2),
-      );
-
-      if (isIdleLockActive) {
-        final pin = scenario.unlockPin?.trim();
-        if (pin == null || pin.isEmpty) {
-          throw StateError(
-            'PenguinPOS is locked. Supply the terminal unlock PIN to continue.',
-          );
-        }
-
-        await engine.waitFor(
-          PenguinPosLoginKeys.idlePinInput,
-          timeout: timeout,
-        );
-        for (var index = 0; index < pin.length; index++) {
-          final key = PenguinPosLoginKeys.idleNumpadDigit(pin[index]);
-          await engine.waitFor(key, timeout: timeout);
-          await engine.tap(key, delay: delay);
-        }
-
-        await engine.tap(PenguinPosLoginKeys.idleUnlock, delay: delay);
-        await engine.waitForAbsent(
-          PenguinPosLoginKeys.idleWidget,
-          timeout: timeout,
-        );
-        emit(
-          'Terminal Unlocked',
-          'Idle timeout lock was removed with the supplied PIN.',
         );
       }
 
@@ -322,7 +293,6 @@ class PenguinPosOrderRunner {
             );
             for (final digit in digits.split('')) {
               final key = PenguinPosOrderKeys.orderNumPadDigit(digit);
-              await engine.waitFor(key, timeout: timeout);
               await engine.tap(key, delay: delay);
             }
             await engine.tap(
@@ -361,7 +331,6 @@ class PenguinPosOrderRunner {
             );
             for (final digit in weightStr.split('')) {
               final key = PenguinPosOrderKeys.orderNumPadDigit(digit);
-              await engine.waitFor(key, timeout: timeout);
               await engine.tap(key, delay: delay);
             }
             await engine.tap(
@@ -472,7 +441,6 @@ class PenguinPosOrderRunner {
         final digits = roundedPayable.toString().split('');
         for (final digit in digits) {
           final key = PenguinPosOrderKeys.paymentNumPadDigit(digit);
-          await engine.waitFor(key, timeout: timeout);
           await engine.tap(key, delay: delay);
         }
 
@@ -649,7 +617,11 @@ class PenguinPosOrderRunner {
         loopMetrics: loopMetricsList,
       );
     } catch (error) {
-      final errorStr = error.toString();
+      final errorStr = redactSecrets(error.toString(), <String?>[
+        scenario.loginId,
+        scenario.password,
+        scenario.unlockPin,
+      ]);
       emit('Order Suite Error', errorStr, level: ExecutionEventLevel.error);
       final isAppClosed =
           errorStr.contains('Service has disappeared') ||
@@ -657,11 +629,6 @@ class PenguinPosOrderRunner {
           errorStr.contains('SocketException') ||
           errorStr.contains('Closed') ||
           errorStr.contains('exited');
-
-      final diag = await engine.getDiagnostics();
-      final diagSuffix = diag != null
-          ? '\n\n🔍 Target App Diagnostics:\n• Active Route: ${diag.currentRoute}\n• Open Dialog: ${diag.isDialogOpen}\n• Bottom Sheet: ${diag.isBottomSheetOpen}'
-          : '';
 
       return OrderRunResult(
         passed: false,
@@ -674,7 +641,7 @@ class PenguinPosOrderRunner {
         aggregateTotalPayable: aggregateTotalPayable,
         aggregatePayableAmount: aggregatePayableAmount,
         loopMetrics: loopMetricsList,
-        error: '$errorStr$diagSuffix',
+        error: errorStr,
         wasAppClosedByUser: isAppClosed,
       );
     } finally {

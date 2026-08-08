@@ -33,6 +33,22 @@ class AssistantTestReportCard extends StatelessWidget {
               formatDuration: formatAssistantDuration,
             ),
           ),
+          if (report.cleanupPassed != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
+              child: Text(
+                report.cleanupPassed!
+                    ? 'Cleanup: completed · Suite isolation: ready'
+                    : 'Cleanup: failed · Suite isolation: not guaranteed',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: report.cleanupPassed!
+                      ? AssistantUiTokens.success
+                      : AssistantUiTokens.error,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
           _SuiteSummary(report: report),
         ],
       ),

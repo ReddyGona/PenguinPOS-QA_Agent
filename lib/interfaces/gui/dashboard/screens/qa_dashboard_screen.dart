@@ -53,9 +53,13 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
   String _selectedSuiteId = 'login_terminal';
   OrderScenario _orderScenario = OrderScenario.sampleScenario;
-  // The assistant is the product's default entry experience. Manual mode is
-  // still one click away, but is not restored as the startup destination.
   bool _aiModeEnabled = true;
+  final List<AiChatMessage> _aiChatMessages = <AiChatMessage>[];
+  AiPendingRequest? _pendingAssistantRequest;
+  bool _aiPlanningWaiting = false;
+  PlanningRequestHandle? _activePlanningHandle;
+
+  bool get _hasActiveWork => _running || _aiPlanningWaiting;
   AiModelConfig _aiModelConfig = const AiModelConfig();
 
   bool _running = false;
@@ -67,6 +71,8 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   bool _wasAppClosedByUser = false;
   List<String> _scenariosCompletedSoFar = <String>[];
   OrderRunResult? _lastOrderRunResult;
+  bool? _lastLoginCleanupPassed;
+  String? _lastLoginCleanupDetail;
 
   // Layer 3: Live execution progress tracking for the AI workspace.
   final _executionSteps = <AiExecutionStep>[];
@@ -161,8 +167,52 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   }
 
   Future<void> _setAiModeEnabled(bool enabled) async {
+    if (!enabled && _hasActiveWork) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Active Task Running'),
+          content: const Text(
+            'A QA test execution or model planning request is currently running. Leaving AI mode will stop active work.',
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop('stay'),
+              child: const Text('Keep running and stay here'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFD92D20),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop('stop'),
+              child: const Text('Stop execution and leave'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop('cancel'),
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      );
+
+      if (choice != 'stop') return;
+      _stopActiveWork();
+    }
     setState(() => _aiModeEnabled = enabled);
     await _preferences.saveAiModeEnabled(enabled);
+  }
+
+  void _stopActiveWork() {
+    _activePlanningHandle?.cancel();
+    _activePlanningHandle = null;
+    if (_running) {
+      _stopRunningSuite();
+    }
+    setState(() {
+      _aiPlanningWaiting = false;
+    });
   }
 
   void _openFirstRunSetupDialog() {
@@ -346,19 +396,86 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     List<AiChatMessage> history,
     AiModelEventCallback onEvent,
   ) async {
-    final apiKey = await _credentialVault.readAiApiKey();
-    final provider = _aiModelConfig.isConfigured
-        ? OpenAiCompatibleProvider(config: _aiModelConfig, apiKey: apiKey)
-        : null;
-    return AiOrchestrator(
-      profiles: _profiles,
-      provider: provider,
-    ).respond(input: input, history: history, onEvent: onEvent);
+    _activePlanningHandle?.cancel();
+    final handle = PlanningRequestHandle(
+      generationId: DateTime.now().microsecondsSinceEpoch,
+    );
+    _activePlanningHandle = handle;
+
+    void safeOnEvent(AiModelEvent event) {
+      if (handle.generationId != _activePlanningHandle?.generationId ||
+          handle.isCancelled) {
+        return;
+      }
+      onEvent(event);
+    }
+
+    try {
+      final apiKey = await _credentialVault.readAiApiKey();
+      final provider = _aiModelConfig.isConfigured
+          ? OpenAiCompatibleProvider(config: _aiModelConfig, apiKey: apiKey)
+          : null;
+
+      final orchestrator = AiOrchestrator(
+        profiles: _profiles,
+        provider: provider,
+      );
+
+      final response = await orchestrator.respond(
+        input: input,
+        history: history,
+        pendingRequest: _pendingAssistantRequest,
+        cancelToken: handle.cancelToken,
+        onEvent: safeOnEvent,
+      );
+
+      if (handle.generationId != _activePlanningHandle?.generationId ||
+          handle.isCancelled) {
+        throw const OperationCanceledException(
+          'Cancelled stale planning request.',
+        );
+      }
+
+      setState(() {
+        _pendingAssistantRequest = response.pendingRequest;
+      });
+
+      return response;
+    } catch (e) {
+      if (handle.generationId != _activePlanningHandle?.generationId ||
+          handle.isCancelled) {
+        throw const OperationCanceledException(
+          'Cancelled stale planning request.',
+        );
+      }
+      rethrow;
+    }
   }
 
   Future<void> _runAiPlan(AiTestPlan plan) async {
     final profile = _profileForId(plan.profileId);
+    final plannedSuite = plan.isOrder
+        ? _suiteForId('order_checkout')
+        : _suiteForId('login_terminal');
+    final preflightSteps = <String>[
+      'Matched target profile: ${profile.label.isEmpty ? plan.profileId : profile.label}',
+      'Confirmed approved non-production target',
+      'Checked saved credentials',
+      'Checked ${plannedSuite.title} readiness',
+      'Confirmed local launch is available',
+    ];
+    _startAiPreflight(
+      profileLabel: profile.label.isEmpty ? plan.profileId : profile.label,
+      steps: preflightSteps,
+    );
+
     if (profile.id.isEmpty) {
+      _finishAiPreflight(
+        steps: preflightSteps,
+        failedStep: 0,
+        message:
+            'I could not find the selected target profile. Choose an approved non-production profile and try again.',
+      );
       _addMessage(
         'Execution Blocked',
         'The selected target profile is no longer configured. Choose an approved non-production profile and try again.',
@@ -366,7 +483,14 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       );
       return;
     }
+    _updateAiPreflightStep(0, AiScenarioStatus.passed);
     if (profile.isProduction) {
+      _finishAiPreflight(
+        steps: preflightSteps,
+        failedStep: 1,
+        message:
+            'Production environments are strictly prohibited. No application was launched.',
+      );
       _addMessage(
         'Execution Blocked',
         'Production environments are strictly prohibited for QA Agent execution.',
@@ -374,8 +498,15 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       );
       return;
     }
+    _updateAiPreflightStep(1, AiScenarioStatus.passed);
     final credentials = await _credentialVault.read(profile.id);
     if (credentials.loginId.isEmpty || credentials.password.isEmpty) {
+      _finishAiPreflight(
+        steps: preflightSteps,
+        failedStep: 2,
+        message:
+            'Credentials are missing for ${profile.label}. Open Settings → Credentials, select this profile, and save the login ID and password.',
+      );
       _addMessage(
         'Credentials Required',
         'Save the login ID and password for ${profile.label} in Settings → Credentials before running this plan.',
@@ -383,6 +514,58 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       );
       return;
     }
+    _updateAiPreflightStep(2, AiScenarioStatus.passed);
+
+    if (!plannedSuite.isImplemented) {
+      _finishAiPreflight(
+        steps: preflightSteps,
+        failedStep: 3,
+        message:
+            '${plannedSuite.title} is configured but does not yet have an executable runner.',
+      );
+      _addMessage(
+        'Suite Pending',
+        'The ${plannedSuite.title} runner is scheduled for the next phase.',
+        QaActivityKind.info,
+      );
+      return;
+    }
+    _updateAiPreflightStep(3, AiScenarioStatus.passed);
+
+    if (_targetMode == QaTargetMode.ssh) {
+      _finishAiPreflight(
+        steps: preflightSteps,
+        failedStep: 4,
+        message:
+            'SSH execution is not available yet. No application was launched.',
+      );
+      _addMessage(
+        'SSH Execution Pending',
+        'Target $_sshUser@$_sshHost saved. SSH remote runner is planned for next phase.',
+        QaActivityKind.info,
+      );
+      return;
+    }
+
+    final appRootIsValid = await PathDetector.isValidAppRoot(_appRoot);
+    final flutterIsValid = await PathDetector.isValidFlutterExecutable(
+      _flutterPath,
+    );
+    if (!appRootIsValid || !flutterIsValid) {
+      _finishAiPreflight(
+        steps: preflightSteps,
+        failedStep: 4,
+        message:
+            'The local PenguinPOS app path or Flutter executable is not ready. Review Settings → System & Engine Paths before running.',
+      );
+      _addMessage(
+        'Launch Setup Required',
+        'Review the PenguinPOS app root and Flutter executable in Settings → System & Engine Paths before running this plan.',
+        QaActivityKind.error,
+      );
+      return;
+    }
+    _updateAiPreflightStep(4, AiScenarioStatus.passed);
 
     setState(() {
       _profile = profile;
@@ -405,6 +588,11 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       }
     });
     await _preferences.saveSelectedProfileId(profile.id);
+    _finishAiPreflight(
+      steps: preflightSteps,
+      message:
+          'Preflight passed for ${profile.label}. Launching ${plannedSuite.title}…',
+    );
     await _runSelectedSuite();
   }
 
@@ -413,6 +601,93 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     orElse: () =>
         const QaProfile(id: '', label: '', entity: '', environment: ''),
   );
+
+  TestSuiteItem _suiteForId(String suiteId) =>
+      TestSuiteItem.availableSuites.firstWhere(
+        (suite) => suite.id == suiteId,
+        orElse: () => TestSuiteItem.availableSuites.first,
+      );
+
+  /// Emits a user-safe preflight timeline before an AI plan can launch the
+  /// target app. This is application activity, not private model reasoning.
+  void _startAiPreflight({
+    required String profileLabel,
+    required List<String> steps,
+  }) {
+    setState(() {
+      _running = true;
+      _executionSuiteTitle = 'Preflight checks';
+      _executionProfileLabel = profileLabel;
+      _executionSteps
+        ..clear()
+        ..addAll(
+          List<AiExecutionStep>.generate(
+            steps.length,
+            (index) => AiExecutionStep(
+              scenarioName: steps[index],
+              status: index == 0
+                  ? AiScenarioStatus.running
+                  : AiScenarioStatus.pending,
+              totalScenarios: steps.length,
+              completedScenarios: 0,
+            ),
+          ),
+        );
+    });
+  }
+
+  void _updateAiPreflightStep(int index, AiScenarioStatus status) {
+    if (index < 0 || index >= _executionSteps.length) return;
+    setState(() {
+      final previous = _executionSteps[index];
+      _executionSteps[index] = AiExecutionStep(
+        scenarioName: previous.scenarioName,
+        status: status,
+        totalScenarios: previous.totalScenarios,
+        completedScenarios: status == AiScenarioStatus.passed
+            ? index + 1
+            : index,
+      );
+      if (status == AiScenarioStatus.passed &&
+          index + 1 < _executionSteps.length) {
+        final next = _executionSteps[index + 1];
+        _executionSteps[index + 1] = AiExecutionStep(
+          scenarioName: next.scenarioName,
+          status: AiScenarioStatus.running,
+          totalScenarios: next.totalScenarios,
+          completedScenarios: index + 1,
+        );
+      }
+    });
+  }
+
+  void _finishAiPreflight({
+    required List<String> steps,
+    required String message,
+    int? failedStep,
+  }) {
+    if (failedStep != null) {
+      _updateAiPreflightStep(failedStep, AiScenarioStatus.failed);
+    }
+    if (_aiModeEnabled) {
+      setState(() {
+        _aiChatMessages.add(
+          AiChatMessage(
+            role: AiChatRole.assistant,
+            text: message,
+            richContent: AiRichPlanningSummary(
+              steps: steps,
+              failedStep: failedStep,
+            ),
+          ),
+        );
+      });
+    }
+    setState(() {
+      _running = false;
+      _executionSteps.clear();
+    });
+  }
 
   Future<void> _runSelectedSuite() async {
     // Keep this check at the execution boundary. AI planning and manual mode
@@ -463,6 +738,8 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _running = true;
       _lastExecutionPassed = null;
       _lastExecutionDetails = null;
+      _lastLoginCleanupPassed = null;
+      _lastLoginCleanupDetail = null;
       _wasAppClosedByUser = false;
       _stopRequested = false;
       _scenariosCompletedSoFar = <String>[];
@@ -596,10 +873,12 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         setState(() {
           _lastExecutionDuration = stopwatch.elapsed;
           _lastExecutionPassed = result.passed;
+          _lastLoginCleanupPassed = result.cleanupPassed;
+          _lastLoginCleanupDetail = result.cleanupDetail;
           _wasAppClosedByUser = result.wasAppClosedByUser || _stopRequested;
           _scenariosCompletedSoFar = result.scenariosExecuted;
           _lastExecutionDetails = result.passed
-              ? 'Successfully executed all scenarios: ${result.scenariosExecuted.join(', ')}.'
+              ? 'Successfully executed all scenarios: ${result.scenariosExecuted.join(', ')}.${result.cleanupPassed == false ? ' Cleanup failed; session isolation is not guaranteed.' : ''}'
               : (_wasAppClosedByUser
                     ? _interruptionDetails(wasStopped: _stopRequested)
                     : (result.error ??
@@ -616,7 +895,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
           _addMessage(
             result.passed ? 'Suite Passed 🎉' : 'Suite Failed ❌',
             result.passed
-                ? 'Completed in ${stopwatch.elapsed.inSeconds}s (${result.scenariosExecuted.length} scenarios).'
+                ? 'Completed in ${stopwatch.elapsed.inSeconds}s (${result.scenariosExecuted.length} scenarios).${result.cleanupPassed == false ? ' Cleanup failed; session isolation is not guaranteed.' : ''}'
                 : (result.error ?? 'Test execution failed.'),
             result.passed ? QaActivityKind.success : QaActivityKind.error,
           );
@@ -695,6 +974,8 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
               passed: _lastExecutionPassed!,
               totalDurationMs: stopwatch.elapsedMilliseconds,
               scenarioResults: scenarioResults,
+              cleanupPassed: _lastLoginCleanupPassed,
+              cleanupDetail: _lastLoginCleanupDetail,
             );
           }
 
@@ -705,7 +986,9 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
                 : 'Test suite finished with failures.',
             richContent: reportContent,
           );
-          _workspaceKey.currentState?.addRichMessage(reportMessage);
+          setState(() {
+            _aiChatMessages.add(reportMessage);
+          });
         }
 
         // Clear temporary execution steps so floating tracker box disappears
@@ -777,15 +1060,30 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       return _buildLoadingScreen();
     }
 
-    if (_showSettingsScreen) {
-      return _buildSettingsScreen();
-    }
-
-    return Scaffold(
-      backgroundColor: _aiModeEnabled
-          ? const Color(0xFFFCFCFD)
-          : const Color(0xFFF1F5F9),
-      body: _aiModeEnabled ? _buildAssistantWorkspace() : _buildManualMode(),
+    return Stack(
+      children: <Widget>[
+        ExcludeSemantics(
+          excluding: _showSettingsScreen,
+          child: IgnorePointer(
+            ignoring: _showSettingsScreen,
+            child: Scaffold(
+              backgroundColor: _aiModeEnabled
+                  ? const Color(0xFFFCFCFD)
+                  : const Color(0xFFF1F5F9),
+              body: _aiModeEnabled
+                  ? _buildAssistantWorkspace()
+                  : _buildManualMode(),
+            ),
+          ),
+        ),
+        if (_showSettingsScreen)
+          Positioned.fill(
+            child: FocusScope(
+              autofocus: true,
+              child: FocusTraversalGroup(child: _buildSettingsScreen()),
+            ),
+          ),
+      ],
     );
   }
 
@@ -818,10 +1116,29 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     activeProfile: _profile,
     modelConfigured: _aiModelConfig.isConfigured,
     running: _running,
+    messages: _aiChatMessages,
+    onAddMessage: (msg) {
+      if (mounted) {
+        setState(() => _aiChatMessages.add(msg));
+      }
+    },
+    onTruncateMessages: (index) {
+      if (mounted && index >= 0 && index < _aiChatMessages.length) {
+        setState(
+          () => _aiChatMessages.removeRange(index, _aiChatMessages.length),
+        );
+      }
+    },
+    onPlanningStateChanged: (waiting) {
+      if (mounted) {
+        setState(() => _aiPlanningWaiting = waiting);
+      }
+    },
     activityMessages: _messages,
     executionSteps: _executionSteps,
     executionSuiteTitle: _executionSuiteTitle,
     executionProfileLabel: _executionProfileLabel,
+    showActivityDetails: _aiModelConfig.enableVerboseReasoning,
     onSend: _respondToAi,
     onRunPlan: _runAiPlan,
     onOpenSettings: _openSettingsDialog,
@@ -1038,10 +1355,15 @@ class _AiAssistantWorkspaceHost extends StatefulWidget {
     required this.activeProfile,
     required this.modelConfigured,
     required this.running,
+    required this.messages,
+    required this.onAddMessage,
+    this.onTruncateMessages,
+    this.onPlanningStateChanged,
     required this.activityMessages,
     required this.executionSteps,
     required this.executionSuiteTitle,
     required this.executionProfileLabel,
+    this.showActivityDetails = false,
     required this.onSend,
     required this.onRunPlan,
     required this.onOpenSettings,
@@ -1052,6 +1374,11 @@ class _AiAssistantWorkspaceHost extends StatefulWidget {
   final QaProfile activeProfile;
   final bool modelConfigured;
   final bool running;
+  final bool showActivityDetails;
+  final List<AiChatMessage> messages;
+  final ValueChanged<AiChatMessage> onAddMessage;
+  final ValueChanged<int>? onTruncateMessages;
+  final ValueChanged<bool>? onPlanningStateChanged;
   final List<QaActivityMessage> activityMessages;
   final List<AiExecutionStep> executionSteps;
   final String executionSuiteTitle;
@@ -1072,12 +1399,6 @@ class _AiAssistantWorkspaceHost extends StatefulWidget {
 }
 
 class _AiAssistantWorkspaceHostState extends State<_AiAssistantWorkspaceHost> {
-  void Function(AiChatMessage message)? _addRichMessageFn;
-
-  void addRichMessage(AiChatMessage message) {
-    _addRichMessageFn?.call(message);
-  }
-
   @override
   Widget build(BuildContext context) {
     return AiAssistantWorkspace(
@@ -1085,6 +1406,11 @@ class _AiAssistantWorkspaceHostState extends State<_AiAssistantWorkspaceHost> {
       activeProfile: widget.activeProfile,
       modelConfigured: widget.modelConfigured,
       running: widget.running,
+      messages: widget.messages,
+      onAddMessage: widget.onAddMessage,
+      onTruncateMessages: widget.onTruncateMessages,
+      onPlanningStateChanged: widget.onPlanningStateChanged,
+      showActivityDetails: widget.showActivityDetails,
       activityMessages: widget.activityMessages,
       executionSteps: widget.executionSteps,
       executionSuiteTitle: widget.executionSuiteTitle,
@@ -1093,7 +1419,6 @@ class _AiAssistantWorkspaceHostState extends State<_AiAssistantWorkspaceHost> {
       onRunPlan: widget.onRunPlan,
       onOpenSettings: widget.onOpenSettings,
       onExitAiMode: widget.onExitAiMode,
-      onRegisterAddMessage: (fn) => _addRichMessageFn = fn,
     );
   }
 }

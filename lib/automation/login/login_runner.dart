@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
+import 'package:penguin_pos_qa_agent/core/secret_redactor.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
@@ -15,6 +16,8 @@ class LoginRunResult {
     this.scenariosExecuted = const <String>[],
     this.vmServiceUri,
     this.error,
+    this.cleanupPassed,
+    this.cleanupDetail,
     this.wasAppClosedByUser = false,
   });
 
@@ -25,6 +28,11 @@ class LoginRunResult {
   final List<String> scenariosExecuted;
   final Uri? vmServiceUri;
   final String? error;
+
+  /// Post-suite session cleanup is tracked independently so scenario results
+  /// remain truthful even when the test environment could not be reset.
+  final bool? cleanupPassed;
+  final String? cleanupDetail;
   final bool wasAppClosedByUser;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -36,6 +44,8 @@ class LoginRunResult {
     'finishedAt': finishedAt.toUtc().toIso8601String(),
     if (vmServiceUri != null) 'vmServiceUri': vmServiceUri.toString(),
     if (error != null) 'error': error,
+    if (cleanupPassed != null) 'cleanupPassed': cleanupPassed,
+    if (cleanupDetail != null) 'cleanupDetail': cleanupDetail,
   };
 }
 
@@ -44,15 +54,12 @@ class PenguinPosLoginRunner {
   void _trace(String msg) => debugPrint('[LoginRunner] $msg');
 
   /// Ensures the app is at Login before starting a suite.
-  /// Unlocks active idle-timeout session using CustomNumPad digit keys (`idle_timeout.numpad.digit.<digit>`).
   Future<void> _ensureLoggedOut(
     DriverEngine engine, {
-    required String? unlockPin,
     Duration timeout = const Duration(seconds: 45),
     Duration delay = Duration.zero,
   }) async {
     final initialState = await engine.waitForAnyKey(<String>[
-      PenguinPosLoginKeys.idleWidget,
       PenguinPosLoginKeys.loginId,
       PenguinPosLoginKeys.homeScreen,
     ], timeout: timeout);
@@ -61,42 +68,6 @@ class PenguinPosLoginRunner {
     if (initialState == PenguinPosLoginKeys.loginId) {
       _trace('App is already on Login; no session reset is needed.');
       return;
-    }
-
-    if (initialState == PenguinPosLoginKeys.idleWidget) {
-      if (unlockPin == null || unlockPin.trim().isEmpty) {
-        throw StateError(
-          'PenguinPOS is locked. Supply the terminal unlock PIN to continue.',
-        );
-      }
-      if (!RegExp(r'^\d{4}$').hasMatch(unlockPin)) {
-        throw ArgumentError.value(
-          unlockPin,
-          'unlockPin',
-          'must contain exactly four digits.',
-        );
-      }
-
-      await engine.waitFor(PenguinPosLoginKeys.idlePinInput, timeout: timeout);
-      _trace(
-        'Idle lock detected; entering a ${unlockPin.length}-digit PIN with the custom numpad.',
-      );
-      for (var index = 0; index < unlockPin.length; index++) {
-        final key = PenguinPosLoginKeys.idleNumpadDigit(unlockPin[index]);
-        await engine.waitFor(key, timeout: timeout);
-        await engine.tap(key, delay: delay);
-        _trace('Tapped idle numpad digit ${index + 1}/${unlockPin.length}.');
-      }
-      await engine.tap(PenguinPosLoginKeys.idleUnlock, delay: delay);
-      _trace('Tapped Unlock; waiting for the idle lock widget to disappear.');
-
-      // Passcode validation is an API call. Wait for the lock to be removed,
-      // then for Home's logout control instead of guessing a completion time.
-      await engine.waitForAbsent(
-        PenguinPosLoginKeys.idleWidget,
-        timeout: timeout,
-      );
-      _trace('Idle lock closed successfully.');
     }
 
     final hasKeyedLogout = await engine.hasKey(
@@ -112,7 +83,6 @@ class PenguinPosLoginRunner {
       _trace(
         'logout.button key is unavailable; using the visible LOGOUT label fallback.',
       );
-      await engine.waitForText('LOGOUT', timeout: timeout);
       await engine.tapText('LOGOUT', delay: delay);
     }
     await engine.waitFor(PenguinPosLoginKeys.logoutConfirm, timeout: timeout);
@@ -147,6 +117,7 @@ class PenguinPosLoginRunner {
     final startedAt = DateTime.now();
     final engine = driverEngine ?? DriverEngine();
     final delay = speed.delay;
+
     final executed = <String>[];
     void emit(
       String title,
@@ -162,12 +133,7 @@ class PenguinPosLoginRunner {
       await engine.connect(vmServiceUri, timeout: timeout);
       emit('Driver Connected', 'Connected to PenguinPOS Flutter Driver.');
 
-      await _ensureLoggedOut(
-        engine,
-        unlockPin: scenario.unlockPin,
-        timeout: timeout,
-        delay: delay,
-      );
+      await _ensureLoggedOut(engine, timeout: timeout, delay: delay);
       emit('Session Reset', 'Login screen is ready for validation.');
 
       // Phase 1: Empty credentials submit validation check
@@ -241,17 +207,28 @@ class PenguinPosLoginRunner {
       onScenarioCompleted?.call('Valid Login Flow');
       emit('Valid Login', 'Terminal selection completed and Home is visible.');
 
-      await _ensureLoggedOut(
-        engine,
-        unlockPin: scenario.unlockPin,
-        timeout: timeout,
-        delay: delay,
-      );
-      emit(
-        'Logout Completed',
-        'Returned to Login screen.',
-        level: ExecutionEventLevel.success,
-      );
+      bool cleanupPassed = true;
+      String? cleanupDetail;
+      try {
+        await _ensureLoggedOut(engine, timeout: timeout, delay: delay);
+        emit(
+          'Logout Completed',
+          'Returned to Login screen.',
+          level: ExecutionEventLevel.success,
+        );
+      } catch (cleanupError) {
+        cleanupPassed = false;
+        cleanupDetail = redactSecrets(cleanupError.toString(), <String?>[
+          scenario.loginId,
+          scenario.password,
+          scenario.unlockPin,
+        ]);
+        emit(
+          'Cleanup Warning',
+          'All login scenarios passed, but the session could not be reset. Test isolation is not guaranteed.',
+          level: ExecutionEventLevel.error,
+        );
+      }
 
       return LoginRunResult(
         passed: true,
@@ -260,9 +237,15 @@ class PenguinPosLoginRunner {
         speed: speed.name,
         scenariosExecuted: executed,
         vmServiceUri: vmServiceUri,
+        cleanupPassed: cleanupPassed,
+        cleanupDetail: cleanupDetail,
       );
     } catch (error) {
-      final errorStr = error.toString();
+      final errorStr = redactSecrets(error.toString(), <String?>[
+        scenario.loginId,
+        scenario.password,
+        scenario.unlockPin,
+      ]);
       emit('Login Suite Error', errorStr, level: ExecutionEventLevel.error);
       final isAppClosed =
           errorStr.contains('Service has disappeared') ||
@@ -271,12 +254,6 @@ class PenguinPosLoginRunner {
           errorStr.contains('Closed') ||
           errorStr.contains('exited');
 
-      // Attempt to query live route and dialog diagnostics from target app
-      final diag = await engine.getDiagnostics();
-      final diagSuffix = diag != null
-          ? '\n\n🔍 Target App Diagnostics:\n• Active Route: ${diag.currentRoute}\n• Open Dialog: ${diag.isDialogOpen}\n• Bottom Sheet: ${diag.isBottomSheetOpen}'
-          : '';
-
       return LoginRunResult(
         passed: false,
         startedAt: startedAt,
@@ -284,7 +261,7 @@ class PenguinPosLoginRunner {
         speed: speed.name,
         scenariosExecuted: executed,
         vmServiceUri: vmServiceUri,
-        error: '$errorStr$diagSuffix',
+        error: errorStr,
         wasAppClosedByUser: isAppClosed,
       );
     } finally {
@@ -307,12 +284,7 @@ class PenguinPosLoginRunner {
     try {
       await engine.connect(vmServiceUri, timeout: timeout);
 
-      await _ensureLoggedOut(
-        engine,
-        unlockPin: scenario.unlockPin,
-        timeout: timeout,
-        delay: delay,
-      );
+      await _ensureLoggedOut(engine, timeout: timeout, delay: delay);
 
       // Step 2: Wait for login screen and enter Login ID
       await engine.waitFor(
@@ -351,12 +323,7 @@ class PenguinPosLoginRunner {
         delay: delay,
       );
 
-      await _ensureLoggedOut(
-        engine,
-        unlockPin: scenario.unlockPin,
-        timeout: timeout,
-        delay: delay,
-      );
+      await _ensureLoggedOut(engine, timeout: timeout, delay: delay);
 
       return LoginRunResult(
         passed: true,
@@ -367,7 +334,11 @@ class PenguinPosLoginRunner {
         vmServiceUri: vmServiceUri,
       );
     } catch (error) {
-      final errorStr = error.toString();
+      final errorStr = redactSecrets(error.toString(), <String?>[
+        scenario.loginId,
+        scenario.password,
+        scenario.unlockPin,
+      ]);
       final isAppClosed =
           errorStr.contains('Service has disappeared') ||
           errorStr.contains('112') ||
@@ -375,18 +346,13 @@ class PenguinPosLoginRunner {
           errorStr.contains('Closed') ||
           errorStr.contains('exited');
 
-      final diag = await engine.getDiagnostics();
-      final diagSuffix = diag != null
-          ? '\n\n🔍 Target App Diagnostics:\n• Active Route: ${diag.currentRoute}\n• Open Dialog: ${diag.isDialogOpen}\n• Bottom Sheet: ${diag.isBottomSheetOpen}'
-          : '';
-
       return LoginRunResult(
         passed: false,
         startedAt: startedAt,
         finishedAt: DateTime.now(),
         speed: speed.name,
         vmServiceUri: vmServiceUri,
-        error: '$errorStr$diagSuffix',
+        error: errorStr,
         wasAppClosedByUser: isAppClosed,
       );
     } finally {

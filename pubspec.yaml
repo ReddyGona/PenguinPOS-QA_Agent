@@ -22,5 +22,10 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+# Bundles the Material icon font used throughout the desktop UI. A full app
+# restart after this change is required for replacement-glyph icons to clear.
+flutter:
+  uses-material-design: true
+
 executables:
   qa-agent: qa_agent

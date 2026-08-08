@@ -70,9 +70,9 @@ class AiModelsSettingsTab extends StatelessWidget {
             ),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Show live model reasoning (debug)'),
+              title: const Text('Show activity details'),
               subtitle: const Text(
-                'Uses a larger response allowance and can make planning slower. Keep off for fast, reliable JSON plans.',
+                'Displays real-time matching and planning status events in the assistant chat UI.',
               ),
               value: enableVerboseReasoning,
               onChanged: onVerboseReasoningToggle,

@@ -26,6 +26,19 @@ application remains responsible for validation and execution.
 | Cash order checks | `create two orders in kpn stage: SKU 22, non-weighed, manual` | Target profile, SKU(s), item type, and entry method. Weighed items also require a positive weight. |
 | Repeat a previous order | `repeat the previous order in kpn dev` | An earlier user message in the same chat containing valid item details. |
 
+The assistant also answers read-only QA questions directly from the configured
+suite catalogue. These never launch PenguinPOS:
+
+```text
+Explain the login flow.
+What is the current order flow?
+What test cases can I run in KPN Stage?
+Explain /login.
+```
+
+Slash commands work inside a normal sentence. Choose a suggestion to insert it
+at the cursor; selecting a suggestion does not send or run anything.
+
 For multiple orders, state whether every order uses the same items or give the
 items for each order. The assistant does not silently choose a SKU, item type,
 weight, or entry method from an example or from unrelated chat history.
@@ -47,18 +60,28 @@ also stopped with an explanation.
 
 The chat is the primary workspace:
 
-1. The assistant parses the request and resolves the configured profile.
-2. It validates the structured plan against guardrails.
-3. A valid plan for an approved non-production profile starts execution.
-4. The chat receives a compact result card; order suites show one result for
+1. Read-only questions are answered from the QA catalogue without a model or
+   app launch.
+2. For an execution request, the assistant parses the request and resolves the
+   configured profile.
+3. It validates the structured plan and shows a live preflight: profile,
+   non-production guard, credentials, suite readiness, and local launch setup.
+4. Only a passing preflight launches an approved non-production target.
+5. The chat receives a compact result card; order suites show one result for
    every requested order plus the checks applied to each order.
 
-Every assistant response may include a collapsed **Planning details** panel.
+Every assistant response may include a collapsed **Activity details** panel.
 It contains safe milestones such as “Parsing request”, “Matching target
 profile”, and “Validating plan”. It deliberately excludes raw model
 chain-of-thought, private reasoning, prompts, secrets, and driver commands.
 The bottom execution log is a secondary diagnostic view, not the main way to
 understand a run.
+
+Read-only catalogue answers are intentionally paced through their real lookup
+stages, then reveal the matching suite details line by line. Login and order
+flow explanations also include native, Mermaid-style flow charts built from
+the configured test cases. The app accepts only declarative diagram nodes;
+untrusted Mermaid, HTML, SVG, and JavaScript are never rendered.
 
 ## Architecture
 

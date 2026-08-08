@@ -53,6 +53,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       var exitCalled = false;
+      final messages = <AiChatMessage>[];
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -61,6 +62,8 @@ void main() {
               activeProfile: QaProfile.values.first,
               modelConfigured: true,
               running: false,
+              messages: messages,
+              onAddMessage: (msg) => messages.add(msg),
               activityMessages: const <QaActivityMessage>[],
               executionSteps: const <AiExecutionStep>[],
               executionSuiteTitle: '',
@@ -130,4 +133,21 @@ void main() {
       expect(closeCalled, isTrue);
     },
   );
+
+  test('CancellationToken triggers listeners and updates isCancelled', () {
+    final token = CancellationToken();
+    expect(token.isCancelled, isFalse);
+
+    var listenerFired = false;
+    token.onCancel(() => listenerFired = true);
+
+    token.cancel();
+    expect(token.isCancelled, isTrue);
+    expect(listenerFired, isTrue);
+
+    // Subsequent listeners execute immediately when token is already cancelled
+    var lateListenerFired = false;
+    token.onCancel(() => lateListenerFired = true);
+    expect(lateListenerFired, isTrue);
+  });
 }

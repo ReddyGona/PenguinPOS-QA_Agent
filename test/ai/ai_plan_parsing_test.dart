@@ -18,6 +18,7 @@ class _FixedModelProvider implements AiModelProvider {
   Future<String> completeJson({
     required String systemPrompt,
     required List<AiChatMessage> messages,
+    CancellationToken? cancelToken,
     AiModelEventCallback? onEvent,
   }) async => response;
 
@@ -230,6 +231,7 @@ void main() {
       profileId: 'kpn-stage',
       items: const <OrderItem>[OrderItem(skuCode: '22')],
     );
+    final messages = <AiChatMessage>[];
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -238,6 +240,8 @@ void main() {
             activeProfile: QaProfile.values.first,
             modelConfigured: true,
             running: false,
+            messages: messages,
+            onAddMessage: (msg) => messages.add(msg),
             activityMessages: const <QaActivityMessage>[],
             executionSteps: const <AiExecutionStep>[],
             executionSuiteTitle: '',
@@ -266,6 +270,7 @@ void main() {
             onRunPlan: (_) => runs++,
             onOpenSettings: () {},
             onExitAiMode: () {},
+            showActivityDetails: true,
           ),
         ),
       ),
@@ -276,11 +281,11 @@ void main() {
     await tester.pump();
 
     expect(runs, 1);
-    expect(find.textContaining('Starting execution'), findsOneWidget);
+    expect(find.textContaining('Running preflight checks'), findsOneWidget);
     expect(find.text('Review & Run'), findsNothing);
-    expect(find.text('Planning details'), findsOneWidget);
+    expect(find.textContaining('2 checks'), findsOneWidget);
 
-    await tester.tap(find.text('Planning details'));
+    await tester.tap(find.textContaining('2 checks'));
     await tester.pump();
     expect(find.text('Matching target profile…'), findsOneWidget);
   });

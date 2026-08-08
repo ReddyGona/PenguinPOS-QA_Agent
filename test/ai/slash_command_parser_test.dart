@@ -6,7 +6,7 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard
 
 void main() {
   group('AI planning guardrails', () {
-    final profiles = <QaProfile>[QaProfile.values[1], QaProfile.values[3]];
+    final profiles = QaProfile.values;
 
     test('slash command selects only a configured profile and workflow', () {
       final response = SlashCommandParser().parse(
@@ -47,6 +47,66 @@ void main() {
         expect(response.state, AiPlanState.needsInput);
         expect(response.plan, isNull);
         expect(response.message, contains('Configure'));
+      },
+    );
+
+    test('multi-word profile spans normalize and match correctly', () {
+      final parser = SlashCommandParser();
+
+      final r1 = parser.findProfileInInput(
+        'can you run /login in kpn staging',
+        profiles,
+      );
+      expect(r1, isNotNull);
+      expect(r1!.id, 'kpn-stage');
+
+      final r2 = parser.findProfileInInput('KPN STAGE', profiles);
+      expect(r2, isNotNull);
+      expect(r2!.id, 'kpn-stage');
+
+      final r3 = parser.findProfileInInput('kpn_stage', profiles);
+      expect(r3, isNotNull);
+      expect(r3!.id, 'kpn-stage');
+    });
+
+    test(
+      'structured pending request resolves multi-turn profile follow-up deterministically',
+      () async {
+        final orchestrator = AiOrchestrator(profiles: profiles, provider: null);
+
+        // Turn 1: User says /login without a profile
+        final turn1Response = await orchestrator.respond(
+          input: '/login',
+          history: <AiChatMessage>[],
+        );
+        expect(turn1Response.state, AiPlanState.needsInput);
+        expect(turn1Response.missingFields, contains('profile'));
+        expect(turn1Response.pendingRequest, isNotNull);
+        expect(
+          turn1Response.pendingRequest!.workflow,
+          AiWorkflow.loginFullSequence,
+        );
+
+        // Turn 2: User responds with "kpn staging" (no / token)
+        final history = <AiChatMessage>[
+          AiChatMessage(role: AiChatRole.user, text: '/login'),
+          AiChatMessage(
+            role: AiChatRole.assistant,
+            text: turn1Response.message,
+            pendingRequest: turn1Response.pendingRequest,
+          ),
+        ];
+
+        final turn2Response = await orchestrator.respond(
+          input: 'kpn staging',
+          history: history,
+        );
+
+        expect(turn2Response.state, AiPlanState.readyForConfirmation);
+        expect(turn2Response.canExecute, isTrue);
+        expect(turn2Response.plan, isNotNull);
+        expect(turn2Response.plan!.profileId, 'kpn-stage');
+        expect(turn2Response.plan!.workflow, AiWorkflow.loginFullSequence);
       },
     );
   });

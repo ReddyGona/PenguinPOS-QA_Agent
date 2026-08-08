@@ -1,25 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_driver/flutter_driver.dart';
-
-/// Diagnostics snapshot from target Flutter application.
-class DriverDiagnostics {
-  const DriverDiagnostics({
-    required this.currentRoute,
-    required this.isDialogOpen,
-    required this.isBottomSheetOpen,
-    this.rawResponse,
-  });
-
-  final String currentRoute;
-  final bool isDialogOpen;
-  final bool isBottomSheetOpen;
-  final String? rawResponse;
-
-  @override
-  String toString() =>
-      'Route: $currentRoute · Dialog: ${isDialogOpen ? "Open" : "Closed"}';
-}
 
 /// Reusable wrapper for FlutterDriver connection, key, and text finder UI interactions.
 class DriverEngine {
@@ -32,27 +13,11 @@ class DriverEngine {
     _driver = await FlutterDriver.connect(
       dartVmServiceUrl: vmServiceUri.toString(),
       timeout: timeout,
+      // Driver command transcripts include text-entry payloads. Disable them
+      // because credentials and PINs are runtime-only secrets.
+      logCommunicationToFile: false,
     );
     return _driver!;
-  }
-
-  /// Requests live route, screen, and dialog diagnostics from PenguinPOS app.
-  Future<DriverDiagnostics?> getDiagnostics() async {
-    final driver = _driver;
-    if (driver == null) return null;
-    try {
-      final raw = await driver.requestData('get_diagnostics');
-      if (raw.isNotEmpty) {
-        final decoded = jsonDecode(raw) as Map<String, Object?>;
-        return DriverDiagnostics(
-          currentRoute: (decoded['currentRoute'] as String?) ?? 'unknown',
-          isDialogOpen: (decoded['isDialogOpen'] as bool?) ?? false,
-          isBottomSheetOpen: (decoded['isBottomSheetOpen'] as bool?) ?? false,
-          rawResponse: raw,
-        );
-      }
-    } catch (_) {}
-    return null;
   }
 
   Future<void> waitFor(
@@ -62,13 +27,38 @@ class DriverEngine {
   }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
-    await driver.waitFor(find.byValueKey(key), timeout: timeout);
-    if (delay != null && delay > Duration.zero) {
-      await Future<void>.delayed(delay);
+
+    final deadline = DateTime.now().add(timeout);
+    const probeTimeout = Duration(milliseconds: 500);
+    var probeCount = 0;
+
+    debugPrint('[DriverEngine] waitFor("$key") started, timeout=$timeout');
+    while (DateTime.now().isBefore(deadline)) {
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+
+      probeCount++;
+      final found = await hasKey(
+        key,
+        timeout: remaining < probeTimeout ? remaining : probeTimeout,
+      );
+      if (found) {
+        debugPrint(
+          '[DriverEngine] waitFor("$key") FOUND after $probeCount probes',
+        );
+        if (delay != null && delay > Duration.zero) {
+          await Future<void>.delayed(delay);
+        }
+        return;
+      }
     }
+
+    debugPrint(
+      '[DriverEngine] waitFor("$key") TIMEOUT after $probeCount probes',
+    );
+    throw TimeoutException('Timed out waiting for key "$key".', timeout);
   }
 
-  /// Waits for a keyed widget to be removed from the widget tree.
   Future<void> waitForAbsent(
     String key, {
     Duration timeout = const Duration(seconds: 45),
@@ -76,10 +66,37 @@ class DriverEngine {
   }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
-    await driver.waitForAbsent(find.byValueKey(key), timeout: timeout);
-    if (delay != null && delay > Duration.zero) {
-      await Future<void>.delayed(delay);
+
+    final deadline = DateTime.now().add(timeout);
+    const probeTimeout = Duration(milliseconds: 250);
+
+    debugPrint(
+      '[DriverEngine] waitForAbsent("$key") started, timeout=$timeout',
+    );
+    while (DateTime.now().isBefore(deadline)) {
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+
+      final exists = await hasKey(
+        key,
+        timeout: remaining < probeTimeout ? remaining : probeTimeout,
+      );
+      if (!exists) {
+        debugPrint(
+          '[DriverEngine] waitForAbsent("$key") CLEARED (widget absent)',
+        );
+        if (delay != null && delay > Duration.zero) {
+          await Future<void>.delayed(delay);
+        }
+        return;
+      }
     }
+
+    debugPrint('[DriverEngine] waitForAbsent("$key") TIMEOUT');
+    throw TimeoutException(
+      'Timed out waiting for key "$key" to disappear.',
+      timeout,
+    );
   }
 
   /// Waits until one of [keys] appears and returns the matching key.
@@ -98,7 +115,14 @@ class DriverEngine {
 
     final deadline = DateTime.now().add(timeout);
     const probeTimeout = Duration(milliseconds: 250);
+    var cycleCount = 0;
+
+    debugPrint(
+      '[DriverEngine] waitForAnyKey(${candidates.join(", ")}) '
+      'started, timeout=$timeout',
+    );
     while (DateTime.now().isBefore(deadline)) {
+      cycleCount++;
       for (final key in candidates) {
         final remaining = deadline.difference(DateTime.now());
         if (remaining <= Duration.zero) break;
@@ -106,10 +130,20 @@ class DriverEngine {
           key,
           timeout: remaining < probeTimeout ? remaining : probeTimeout,
         );
-        if (keyFound) return key;
+        if (keyFound) {
+          debugPrint(
+            '[DriverEngine] waitForAnyKey FOUND "$key" '
+            'on cycle #$cycleCount',
+          );
+          return key;
+        }
       }
     }
 
+    debugPrint(
+      '[DriverEngine] waitForAnyKey TIMEOUT after $cycleCount cycles. '
+      'Keys: ${candidates.join(", ")}',
+    );
     throw TimeoutException(
       'Timed out waiting for one of: ${candidates.join(', ')}.',
       timeout,
@@ -157,14 +191,20 @@ class DriverEngine {
     }
   }
 
-  Future<void> enterText(String key, String text, {Duration? delay}) async {
+  Future<void> enterText(
+    String key,
+    String text, {
+    Duration? delay,
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
-    await driver.tap(find.byValueKey(key));
+    debugPrint('[DriverEngine] enterText("$key", ${text.length} chars)');
+    await driver.tap(find.byValueKey(key), timeout: timeout);
     if (delay != null && delay > Duration.zero) {
       await Future<void>.delayed(delay);
     }
-    await driver.enterText(text);
+    await driver.enterText(text, timeout: timeout);
     if (delay != null && delay > Duration.zero) {
       await Future<void>.delayed(delay);
     }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_message_list.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_rich_message.dart';
 
 void main() {
@@ -8,7 +9,7 @@ void main() {
     home: Scaffold(body: AssistantRichMessage(content: content)),
   );
 
-  testWidgets('planning details reveal safe lifecycle steps only', (
+  testWidgets('preparation activity expands safe lifecycle steps inline', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -23,11 +24,10 @@ void main() {
       ),
     );
 
-    expect(find.text('Planning details'), findsOneWidget);
-    expect(find.text('3 steps'), findsOneWidget);
+    expect(find.text('Preparation activity · 3 checks'), findsOneWidget);
     expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsOneWidget);
 
-    await tester.tap(find.text('Planning details'));
+    await tester.tap(find.text('Preparation activity · 3 checks'));
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsOneWidget);
@@ -89,4 +89,108 @@ void main() {
       expect(find.text('Cash payment completed'), findsOneWidget);
     },
   );
+
+  testWidgets('keeps completed activity expandable below a knowledge result', (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AssistantMessageList(
+            messages: <AiChatMessage>[
+              AiChatMessage(
+                role: AiChatRole.assistant,
+                text: 'Here is the login flow.',
+                richContent: const AiRichKnowledgeAnswer(
+                  answer: AiKnowledgeAnswer(
+                    title: 'Login flow',
+                    summary: 'Login coverage.',
+                  ),
+                ),
+                activitySummary: const AiRichPlanningSummary(
+                  steps: <String>[
+                    'Reading QA request…',
+                    'Matched Login & Terminal coverage.',
+                  ],
+                  elapsedMs: 2200,
+                ),
+              ),
+            ],
+            scrollController: scrollController,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Worked for 2s · 2 checks'), findsOneWidget);
+    expect(find.text('Reading QA request…'), findsNothing);
+    expect(
+      tester.getTopLeft(find.text('Worked for 2s · 2 checks')).dy,
+      lessThan(tester.getTopLeft(find.text('Login flow')).dy),
+    );
+
+    await tester.tap(find.text('Worked for 2s · 2 checks'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Reading QA request…'), findsOneWidget);
+    expect(find.text('Matched Login & Terminal coverage.'), findsOneWidget);
+  });
+
+  testWidgets('knowledge answer progressively reveals a safe flow chart', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      host(
+        const AiRichKnowledgeAnswer(
+          answer: AiKnowledgeAnswer(
+            title: 'Login flow',
+            summary: 'Login coverage.',
+            sections: <AiKnowledgeSection>[
+              AiKnowledgeSection(
+                title: 'Test cases',
+                items: <String>['Login Validation'],
+              ),
+            ],
+            diagrams: <AiKnowledgeDiagram>[
+              AiKnowledgeDiagram(
+                title: 'Login flow chart',
+                nodes: <AiKnowledgeDiagramNode>[
+                  AiKnowledgeDiagramNode(
+                    id: 'validate',
+                    label: 'Login Validation',
+                    kind: AiKnowledgeDiagramNodeKind.decision,
+                  ),
+                  AiKnowledgeDiagramNode(
+                    id: 'valid_login',
+                    label: 'Valid Login Flow',
+                    kind: AiKnowledgeDiagramNodeKind.end,
+                  ),
+                ],
+                edges: <AiKnowledgeDiagramEdge>[
+                  AiKnowledgeDiagramEdge(
+                    fromNodeId: 'validate',
+                    toNodeId: 'valid_login',
+                    label: 'Yes',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Login flow'), findsOneWidget);
+    expect(find.text('Login flow chart'), findsNothing);
+
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.text('Login Validation'), findsNWidgets(2));
+    expect(find.text('Login flow chart'), findsOneWidget);
+    expect(find.text('Valid Login Flow'), findsOneWidget);
+    expect(find.text('DECISION'), findsOneWidget);
+    expect(find.byType(CustomPaint), findsAtLeastNWidgets(1));
+  });
 }

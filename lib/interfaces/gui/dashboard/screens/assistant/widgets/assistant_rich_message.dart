@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_knowledge_answer_card.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_order_report_card.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_plan_summary_card.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_planning_summary_card.dart';
@@ -18,6 +19,9 @@ class AssistantRichMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return switch (content) {
+      AiRichKnowledgeAnswer answer => AssistantKnowledgeAnswerCard(
+        answer: answer.answer,
+      ),
       AiRichPlanSummary summary => AssistantPlanSummaryCard(summary: summary),
       AiRichTestReport report => AssistantTestReportCard(report: report),
       AiRichOrderReport report => AssistantOrderReportCard(report: report),

@@ -22,6 +22,13 @@ class AssistantPlanSummaryCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: _PlanMetadata(summary: summary),
           ),
+          if (summary.orderItems.isNotEmpty) ...<Widget>[
+            const Divider(height: 1, color: AssistantUiTokens.divider),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+              child: _OrderItemsTable(items: summary.orderItems),
+            ),
+          ],
           if (summary.scenarios.isNotEmpty) ...<Widget>[
             const Divider(height: 1, color: AssistantUiTokens.divider),
             Padding(
@@ -31,6 +38,75 @@ class AssistantPlanSummaryCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _OrderItemsTable extends StatelessWidget {
+  const _OrderItemsTable({required this.items});
+
+  final List<AiOrderItemRow> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Padding(
+          padding: EdgeInsets.only(bottom: 6),
+          child: Text(
+            'ORDER ITEMS CONFIGURATION',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: AssistantUiTokens.mutedText,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        Table(
+          columnWidths: const <int, TableColumnWidth>{
+            0: FixedColumnWidth(28),
+            1: FlexColumnWidth(1.2),
+            2: FlexColumnWidth(1.0),
+            3: FlexColumnWidth(1.2),
+            4: FlexColumnWidth(1.1),
+          },
+          children: <TableRow>[
+            const TableRow(
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: AssistantUiTokens.divider),
+                ),
+              ),
+              children: <Widget>[
+                _PlanTableHeader('#'),
+                _PlanTableHeader('SKU Code'),
+                _PlanTableHeader('Type'),
+                _PlanTableHeader('Entry Mode'),
+                _PlanTableHeader('Allocation'),
+              ],
+            ),
+            for (var index = 0; index < items.length; index++)
+              TableRow(
+                decoration: index < items.length - 1
+                    ? const BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(color: Color(0xFFF0EEEA)),
+                        ),
+                      )
+                    : null,
+                children: <Widget>[
+                  _PlanTableCell('${index + 1}'),
+                  _PlanTableCell(items[index].skuCode),
+                  _PlanTableCell(items[index].typeLabel),
+                  _PlanTableCell(items[index].entryModeLabel),
+                  _PlanTableCell(items[index].allocationLabel),
+                ],
+              ),
+          ],
+        ),
+      ],
     );
   }
 }

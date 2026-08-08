@@ -99,6 +99,101 @@ enum AiPlanState { needsInput, readyForConfirmation, unsupported }
 
 enum AiItemStrategy { sameForAll, perOrder }
 
+/// The purpose of an assistant response. Only [plan] responses with a ready
+/// plan are eligible for execution; every other kind is informational.
+enum AiAssistantResponseKind { plan, knowledge, clarification, blocked }
+
+/// A compact, transport-safe section of a catalogue-backed answer.
+///
+/// The UI may render this as cards or a table later. Keeping it in the domain
+/// response means common QA questions do not require a model or UI scraping.
+class AiKnowledgeSection {
+  const AiKnowledgeSection({
+    required this.title,
+    this.body,
+    this.items = const <String>[],
+  });
+
+  final String title;
+  final String? body;
+  final List<String> items;
+}
+
+/// The reading direction of a safe, declarative flow chart.
+enum AiKnowledgeDiagramDirection { topToBottom, leftToRight }
+
+/// The semantic role of a diagram node. The renderer uses this to distinguish
+/// decisions from ordinary process steps without accepting executable markup.
+enum AiKnowledgeDiagramNodeKind { start, process, decision, end }
+
+/// A safe, declarative flow chart. It intentionally does not accept arbitrary
+/// Mermaid/HTML/JavaScript, so a model response cannot inject content into the
+/// desktop UI.
+class AiKnowledgeDiagram {
+  const AiKnowledgeDiagram({
+    required this.title,
+    required this.nodes,
+    this.edges = const <AiKnowledgeDiagramEdge>[],
+    this.direction = AiKnowledgeDiagramDirection.topToBottom,
+  });
+
+  final String title;
+  final List<AiKnowledgeDiagramNode> nodes;
+  final List<AiKnowledgeDiagramEdge> edges;
+  final AiKnowledgeDiagramDirection direction;
+}
+
+class AiKnowledgeDiagramNode {
+  const AiKnowledgeDiagramNode({
+    this.id = '',
+    required this.label,
+    this.detail,
+    this.kind = AiKnowledgeDiagramNodeKind.process,
+  });
+
+  /// Stable node identity used exclusively by [AiKnowledgeDiagramEdge].
+  final String id;
+  final String label;
+  final String? detail;
+  final AiKnowledgeDiagramNodeKind kind;
+}
+
+/// A labelled connection between two declared diagram nodes.
+class AiKnowledgeDiagramEdge {
+  const AiKnowledgeDiagramEdge({
+    required this.fromNodeId,
+    required this.toNodeId,
+    this.label,
+  });
+
+  final String fromNodeId;
+  final String toNodeId;
+  final String? label;
+}
+
+/// Structured, non-executable answer content for QA catalogue questions.
+class AiKnowledgeAnswer {
+  const AiKnowledgeAnswer({
+    required this.title,
+    required this.summary,
+    this.sections = const <AiKnowledgeSection>[],
+    this.sources = const <String>[],
+    this.diagrams = const <AiKnowledgeDiagram>[],
+    this.suiteIds = const <String>[],
+  });
+
+  final String title;
+  final String summary;
+  final List<AiKnowledgeSection> sections;
+  final List<String> sources;
+  final List<AiKnowledgeDiagram> diagrams;
+
+  /// Canonical catalogue identities represented by this answer. This is safe
+  /// chat context, allowing follow-ups such as "show the above as a diagram"
+  /// to remain scoped to the user's previous selection.
+  final List<String> suiteIds;
+}
+
 /// A validated, provider-independent plan that can be translated into a QA
 /// suite. This stays declarative; execution happens only in the dashboard.
 class AiTestPlan {
@@ -230,6 +325,104 @@ class AiTestPlan {
   }
 }
 
+/// Exception thrown when an AI planning request or operation is cancelled.
+class OperationCanceledException implements Exception {
+  const OperationCanceledException([this.message = 'Operation was cancelled.']);
+  final String message;
+
+  @override
+  String toString() => 'OperationCanceledException: $message';
+}
+
+/// Token for active request cancellation across UI, orchestrator, and model provider.
+class CancellationToken {
+  bool _isCancelled = false;
+  bool get isCancelled => _isCancelled;
+
+  final List<void Function()> _listeners = <void Function()>[];
+
+  void cancel() {
+    if (_isCancelled) return;
+    _isCancelled = true;
+    for (final listener in List<void Function()>.from(_listeners)) {
+      listener();
+    }
+    _listeners.clear();
+  }
+
+  void onCancel(void Function() listener) {
+    if (_isCancelled) {
+      listener();
+      return;
+    }
+    _listeners.add(listener);
+  }
+
+  void removeListener(void Function() listener) {
+    _listeners.remove(listener);
+  }
+}
+
+/// Handle tracking active planning generations and cancellation tokens.
+class PlanningRequestHandle {
+  PlanningRequestHandle({
+    required this.generationId,
+    CancellationToken? cancelToken,
+  }) : cancelToken = cancelToken ?? CancellationToken();
+
+  final int generationId;
+  final CancellationToken cancelToken;
+
+  bool get isCancelled => cancelToken.isCancelled;
+  void cancel() => cancelToken.cancel();
+}
+
+/// Structured pending context for multi-turn slot filling.
+class AiPendingRequest {
+  const AiPendingRequest({
+    required this.workflow,
+    required this.missingFields,
+    this.ordersCount = 1,
+    this.profileId,
+    this.skuCodes = const <String>[],
+    this.itemType,
+    this.entryMode,
+    this.itemStrategy,
+    this.partialPlan,
+  });
+
+  final AiWorkflow workflow;
+  final List<String> missingFields;
+  final int ordersCount;
+  final String? profileId;
+  final List<String> skuCodes;
+  final SkuItemType? itemType;
+  final ItemEntryMode? entryMode;
+  final AiItemStrategy? itemStrategy;
+  final AiTestPlan? partialPlan;
+
+  AiPendingRequest copyWith({
+    List<String>? missingFields,
+    int? ordersCount,
+    String? profileId,
+    List<String>? skuCodes,
+    SkuItemType? itemType,
+    ItemEntryMode? entryMode,
+    AiItemStrategy? itemStrategy,
+    AiTestPlan? partialPlan,
+  }) => AiPendingRequest(
+    workflow: workflow,
+    missingFields: missingFields ?? this.missingFields,
+    ordersCount: ordersCount ?? this.ordersCount,
+    profileId: profileId ?? this.profileId,
+    skuCodes: skuCodes ?? this.skuCodes,
+    itemType: itemType ?? this.itemType,
+    entryMode: entryMode ?? this.entryMode,
+    itemStrategy: itemStrategy ?? this.itemStrategy,
+    partialPlan: partialPlan ?? this.partialPlan,
+  );
+}
+
 /// Result returned by either the shortcut parser or the model planner.
 class AiAssistantResponse {
   const AiAssistantResponse({
@@ -237,15 +430,49 @@ class AiAssistantResponse {
     required this.state,
     this.plan,
     this.missingFields = const <String>[],
+    this.kind = AiAssistantResponseKind.plan,
+    this.knowledge,
+    this.richContent,
+    this.pendingRequest,
   });
 
   final String message;
   final AiPlanState state;
   final AiTestPlan? plan;
   final List<String> missingFields;
+  final AiAssistantResponseKind kind;
+  final AiKnowledgeAnswer? knowledge;
+  final AiRichContent? richContent;
+  final AiPendingRequest? pendingRequest;
+
+  /// Execution is intentionally opt-in. Informational answers, clarifications
+  /// and blocks can never be promoted to driver input by a UI consumer.
+  bool get canExecute =>
+      kind == AiAssistantResponseKind.plan &&
+      state == AiPlanState.readyForConfirmation &&
+      plan != null;
+
+  factory AiAssistantResponse.knowledge({
+    required String message,
+    required AiKnowledgeAnswer knowledge,
+  }) => AiAssistantResponse(
+    message: message,
+    state: AiPlanState.needsInput,
+    kind: AiAssistantResponseKind.knowledge,
+    knowledge: knowledge,
+  );
 
   factory AiAssistantResponse.fromJson(Map<String, Object?> json) {
     final planRaw = json['plan'];
+    final plan = _parsePlan(planRaw);
+    final requestedKind = AiAssistantResponseKind.values.firstWhere(
+      (kind) => kind.name == json['kind'],
+      // Keep existing provider contracts working: plans are plans, and a
+      // response without one is a clarification.
+      orElse: () => plan == null
+          ? AiAssistantResponseKind.clarification
+          : AiAssistantResponseKind.plan,
+    );
     return AiAssistantResponse(
       message:
           (json['message'] as String?)?.trim() ??
@@ -254,11 +481,13 @@ class AiAssistantResponse {
         (state) => state.name == json['state'],
         orElse: () => AiPlanState.needsInput,
       ),
-      plan: _parsePlan(planRaw),
+      plan: requestedKind == AiAssistantResponseKind.plan ? plan : null,
       missingFields:
           (json['missingFields'] as List<dynamic>? ?? const <dynamic>[])
               .whereType<String>()
               .toList(),
+      kind: requestedKind,
+      knowledge: _parseKnowledge(json['knowledge']),
     );
   }
 
@@ -271,6 +500,119 @@ class AiAssistantResponse {
       }
     }
     return null;
+  }
+
+  static AiKnowledgeAnswer? _parseKnowledge(Object? raw) {
+    if (raw is! Map) return null;
+    final value = raw.cast<String, Object?>();
+    final title = (value['title'] as String?)?.trim();
+    final summary = (value['summary'] as String?)?.trim();
+    if (title == null || title.isEmpty || summary == null || summary.isEmpty) {
+      return null;
+    }
+    final sections = (value['sections'] as List<dynamic>? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((section) {
+          final item = section.cast<String, Object?>();
+          final sectionTitle = (item['title'] as String?)?.trim();
+          if (sectionTitle == null || sectionTitle.isEmpty) return null;
+          return AiKnowledgeSection(
+            title: sectionTitle,
+            body: (item['body'] as String?)?.trim(),
+            items: (item['items'] as List<dynamic>? ?? const <dynamic>[])
+                .whereType<String>()
+                .toList(growable: false),
+          );
+        })
+        .whereType<AiKnowledgeSection>()
+        .toList(growable: false);
+    return AiKnowledgeAnswer(
+      title: title,
+      summary: summary,
+      sections: sections,
+      sources: (value['sources'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<String>()
+          .toList(growable: false),
+      diagrams: _parseKnowledgeDiagrams(value['diagrams']),
+      suiteIds: (value['suiteIds'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<String>()
+          .toList(growable: false),
+    );
+  }
+
+  static List<AiKnowledgeDiagram> _parseKnowledgeDiagrams(Object? raw) {
+    if (raw is! List) return const <AiKnowledgeDiagram>[];
+    return raw
+        .whereType<Map>()
+        .map((diagram) {
+          final value = diagram.cast<String, Object?>();
+          final title = (value['title'] as String?)?.trim();
+          if (title == null || title.isEmpty) return null;
+          final nodes = (value['nodes'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<Map>()
+              .indexed
+              .map((entry) {
+                final index = entry.$1;
+                final node = entry.$2;
+                final nodeValue = node.cast<String, Object?>();
+                final label = (nodeValue['label'] as String?)?.trim();
+                if (label == null || label.isEmpty) return null;
+                final kindName = (nodeValue['kind'] as String?)?.trim();
+                return AiKnowledgeDiagramNode(
+                  // Older providers may not send an ID. Preserve their
+                  // sequential nodes with deterministic, local identities.
+                  id: (nodeValue['id'] as String?)?.trim().isNotEmpty == true
+                      ? (nodeValue['id'] as String).trim()
+                      : 'node_$index',
+                  label: label,
+                  detail: (nodeValue['detail'] as String?)?.trim(),
+                  kind: AiKnowledgeDiagramNodeKind.values.firstWhere(
+                    (kind) => kind.name == kindName,
+                    orElse: () => AiKnowledgeDiagramNodeKind.process,
+                  ),
+                );
+              })
+              .whereType<AiKnowledgeDiagramNode>()
+              .toList(growable: false);
+          final nodeIds = nodes.map((node) => node.id).toSet();
+          final edges = (value['edges'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<Map>()
+              .map((edge) {
+                final edgeValue = edge.cast<String, Object?>();
+                final from = (edgeValue['fromNodeId'] ?? edgeValue['from'])
+                    ?.toString()
+                    .trim();
+                final to = (edgeValue['toNodeId'] ?? edgeValue['to'])
+                    ?.toString()
+                    .trim();
+                if (from == null ||
+                    to == null ||
+                    !nodeIds.contains(from) ||
+                    !nodeIds.contains(to)) {
+                  return null;
+                }
+                return AiKnowledgeDiagramEdge(
+                  fromNodeId: from,
+                  toNodeId: to,
+                  label: (edgeValue['label'] as String?)?.trim(),
+                );
+              })
+              .whereType<AiKnowledgeDiagramEdge>()
+              .toList(growable: false);
+          return nodes.isEmpty
+              ? null
+              : AiKnowledgeDiagram(
+                  title: title,
+                  nodes: nodes,
+                  edges: edges,
+                  direction: AiKnowledgeDiagramDirection.values.firstWhere(
+                    (direction) => direction.name == value['direction'],
+                    orElse: () => AiKnowledgeDiagramDirection.topToBottom,
+                  ),
+                );
+        })
+        .whereType<AiKnowledgeDiagram>()
+        .toList(growable: false);
   }
 }
 
@@ -351,6 +693,14 @@ sealed class AiRichContent {
   const AiRichContent();
 }
 
+/// Read-only, catalogue-backed answer content. Unlike a plan, this can never
+/// initiate a PenguinPOS run.
+class AiRichKnowledgeAnswer extends AiRichContent {
+  const AiRichKnowledgeAnswer({required this.answer});
+
+  final AiKnowledgeAnswer answer;
+}
+
 /// A styled summary card showing the planned test profile, workflow, and
 /// scenario list – rendered as a card + table in the chat.
 class AiRichPlanSummary extends AiRichContent {
@@ -358,11 +708,27 @@ class AiRichPlanSummary extends AiRichContent {
     required this.profileLabel,
     required this.workflowLabel,
     required this.scenarios,
+    this.orderItems = const <AiOrderItemRow>[],
   });
 
   final String profileLabel;
   final String workflowLabel;
   final List<AiScenarioRow> scenarios;
+  final List<AiOrderItemRow> orderItems;
+}
+
+class AiOrderItemRow {
+  const AiOrderItemRow({
+    required this.skuCode,
+    required this.typeLabel,
+    required this.entryModeLabel,
+    required this.allocationLabel,
+  });
+
+  final String skuCode;
+  final String typeLabel;
+  final String entryModeLabel;
+  final String allocationLabel;
 }
 
 class AiScenarioRow {
@@ -381,6 +747,8 @@ class AiRichTestReport extends AiRichContent {
     required this.passed,
     required this.totalDurationMs,
     required this.scenarioResults,
+    this.cleanupPassed,
+    this.cleanupDetail,
   });
 
   final String suiteTitle;
@@ -388,6 +756,8 @@ class AiRichTestReport extends AiRichContent {
   final bool passed;
   final int totalDurationMs;
   final List<AiScenarioResult> scenarioResults;
+  final bool? cleanupPassed;
+  final String? cleanupDetail;
 
   int get passedCount => scenarioResults.where((s) => s.passed).length;
   int get failedCount => scenarioResults.where((s) => !s.passed).length;
@@ -435,9 +805,22 @@ class AiOrderResult {
 /// This intentionally contains only application status steps, never model
 /// reasoning or hidden instructions.
 class AiRichPlanningSummary extends AiRichContent {
-  const AiRichPlanningSummary({required this.steps});
+  const AiRichPlanningSummary({
+    required this.steps,
+    this.failedStep,
+    this.elapsedMs,
+  });
 
   final List<String> steps;
+
+  /// Index of a preflight step that blocked execution. A null value means the
+  /// activity completed successfully. This is application state, never model
+  /// reasoning or a secret.
+  final int? failedStep;
+
+  /// Elapsed application work time. This is a UI convenience only; it is not
+  /// a measure of hidden model reasoning.
+  final int? elapsedMs;
 }
 
 class AiScenarioResult {
@@ -464,6 +847,8 @@ class AiChatMessage {
     required this.role,
     required this.text,
     this.richContent,
+    this.activitySummary,
+    this.pendingRequest,
     DateTime? at,
   }) : at = at ?? DateTime.now();
 
@@ -474,4 +859,12 @@ class AiChatMessage {
   /// When non-null, the message list renders a structured card/table instead
   /// of plain [SelectableText].
   final AiRichContent? richContent;
+
+  /// Safe activity retained beneath the completed result. This is separate
+  /// from [richContent] so a knowledge answer can keep both its result and an
+  /// expandable "what I checked" transcript.
+  final AiRichPlanningSummary? activitySummary;
+
+  /// Structured pending context for multi-turn slot filling.
+  final AiPendingRequest? pendingRequest;
 }
