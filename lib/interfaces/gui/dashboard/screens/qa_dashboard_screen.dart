@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/ai_orchestrator.dart';
 import 'package:penguin_pos_qa_agent/ai/providers/openai_compatible_provider.dart';
+import 'package:penguin_pos_qa_agent/application/execution/preflight_service.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
 import 'package:penguin_pos_qa_agent/runtime/path_detector.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
@@ -20,6 +22,7 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/orde
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/ai_assistant_workspace.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/qa_settings_screen.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_credential_vault.dart';
+import 'package:penguin_pos_qa_agent/domain/plan/execution_plan.dart';
 
 /// Coordinates dashboard configuration, test execution, and the AI workspace.
 ///
@@ -79,8 +82,6 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   String _executionSuiteTitle = '';
   String _executionProfileLabel = '';
   final _executionStopwatch = Stopwatch();
-  final GlobalKey<_AiAssistantWorkspaceHostState> _workspaceKey =
-      GlobalKey<_AiAssistantWorkspaceHostState>();
 
   final _messages = <QaActivityMessage>[
     QaActivityMessage(
@@ -102,6 +103,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     final selectedProfileId = await _preferences.loadSelectedProfileId();
     var hasCompletedInitialSetup = await _preferences
         .hasCompletedInitialSetup();
+    final aiModeEnabled = await _preferences.loadAiModeEnabled();
     final aiModelConfig = await _preferences.loadAiModelConfig();
     final selectedProfile = profiles.firstWhere(
       (profile) => profile.id == selectedProfileId,
@@ -129,6 +131,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _password = credentials.password;
       _unlockPin = credentials.unlockPin;
       _aiModelConfig = aiModelConfig;
+      _aiModeEnabled = aiModeEnabled;
       _preferencesLoaded = true;
       _showFirstRunSetupPrompt = !hasCompletedInitialSetup;
     });
@@ -418,6 +421,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
       final orchestrator = AiOrchestrator(
         profiles: _profiles,
+        activeProfile: _profile,
         provider: provider,
       );
 
@@ -593,7 +597,52 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       message:
           'Preflight passed for ${profile.label}. Launching ${plannedSuite.title}…',
     );
-    await _runSelectedSuite();
+    await _runSelectedSuite(skipPreflight: true);
+  }
+
+  /// Opens a validated assistant plan in the existing manual workspace without
+  /// launching PenguinPOS. The manual forms remain the operator's editable
+  /// review surface; execution can only begin from their Run action.
+  Future<void> _openAiPlanInManualMode(AiTestPlan plan) async {
+    final profile = _profileForId(plan.profileId);
+    if (profile.id.isEmpty) {
+      _addMessage(
+        'Plan Needs Attention',
+        'The target profile in this plan is no longer configured.',
+        QaActivityKind.error,
+      );
+      return;
+    }
+    final credentials = await _credentialVault.read(profile.id);
+    if (!mounted) return;
+    setState(() {
+      _profile = profile;
+      _loginId = credentials.loginId;
+      _password = credentials.password;
+      _unlockPin = credentials.unlockPin;
+      _selectedSuiteId = plan.isOrder ? 'order_checkout' : 'login_terminal';
+      if (plan.isOrder) {
+        _orderScenario = OrderScenario(
+          id: 'ai_${profile.id}_order_cash',
+          name: 'AI planned Order & Cash Payment',
+          items: plan.items,
+          ordersCount: plan.ordersCount,
+          inputSourceMode: InputSourceMode.uiForm,
+          uiCustomMode: plan.itemStrategy == AiItemStrategy.perOrder
+              ? UiCustomMode.perIteration
+              : UiCustomMode.common,
+          perIterationItems: plan.perIterationItems,
+        );
+      }
+      _aiModeEnabled = false;
+    });
+    await _preferences.saveSelectedProfileId(profile.id);
+    await _preferences.saveAiModeEnabled(false);
+    _addMessage(
+      'Plan Opened in Manual Mode',
+      'Review and edit the generated plan before running it.',
+      QaActivityKind.info,
+    );
   }
 
   QaProfile _profileForId(String profileId) => _profiles.firstWhere(
@@ -689,7 +738,73 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     });
   }
 
-  Future<void> _runSelectedSuite() async {
+  ExecutionPlan _manualExecutionPlan() => ExecutionPlan(
+    profileId: _profile.id,
+    suiteId: _selectedSuiteId == 'order_checkout'
+        ? QaSuiteId.orderCheckout
+        : QaSuiteId.loginTerminal,
+    orderConfiguration: _selectedSuiteId == 'order_checkout'
+        ? OrderExecutionConfiguration(
+            ordersCount: _orderScenario.ordersCount,
+            itemStrategy:
+                _orderScenario.uiCustomMode == UiCustomMode.perIteration
+                ? ExecutionItemStrategy.perOrder
+                : ExecutionItemStrategy.sameForAll,
+            items: _orderScenario.items,
+            perIterationItems: _orderScenario.perIterationItems,
+          )
+        : null,
+  );
+
+  /// Manual mode uses the same safety contract as an AI-reviewed plan. The AI
+  /// path has already displayed this preflight before calling the runner.
+  Future<bool> _runManualPreflight() async {
+    final preflight = PreflightService(
+      PreflightDependencies(
+        findProfile: (profileId) {
+          final profile = _profileForId(profileId);
+          return profile.id.isEmpty
+              ? null
+              : PreflightProfile(
+                  id: profile.id,
+                  label: profile.label,
+                  isProduction: profile.isProduction,
+                );
+        },
+        hasSavedLoginCredentials: (profileId) async {
+          final credentials = await _credentialVault.read(profileId);
+          return credentials.loginId.isNotEmpty &&
+              credentials.password.isNotEmpty;
+        },
+        isSuiteImplemented: (suiteId) =>
+            _suiteForId(suiteId.storageValue).isImplemented,
+        checkRuntimeReadiness: () async => RuntimeReadiness(
+          localExecutionSupported: _targetMode == QaTargetMode.local,
+          appRootIsValid: await PathDetector.isValidAppRoot(_appRoot),
+          flutterExecutableIsValid: await PathDetector.isValidFlutterExecutable(
+            _flutterPath,
+          ),
+        ),
+      ),
+    );
+    final result = await preflight.check(_manualExecutionPlan());
+    if (result.passed) return true;
+
+    final failure = result.failure;
+    final message = failure?.message ?? 'The test plan did not pass preflight.';
+    _addMessage('Execution Blocked', message, QaActivityKind.error);
+    if (mounted) {
+      setState(() {
+        _lastExecutionPassed = null;
+        _wasAppClosedByUser = false;
+        _lastExecutionDetails = message;
+      });
+    }
+    return false;
+  }
+
+  Future<void> _runSelectedSuite({bool skipPreflight = false}) async {
+    if (!skipPreflight && !await _runManualPreflight()) return;
     // Keep this check at the execution boundary. AI planning and manual mode
     // share this runner, so neither path can execute a production profile.
     if (_profile.isProduction) {
@@ -1110,10 +1225,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     onClose: () => setState(() => _showSettingsScreen = false),
   );
 
-  Widget _buildAssistantWorkspace() => _AiAssistantWorkspaceHost(
-    key: _workspaceKey,
-    profiles: _profiles,
-    activeProfile: _profile,
+  Widget _buildAssistantWorkspace() => AiAssistantWorkspace(
     modelConfigured: _aiModelConfig.isConfigured,
     running: _running,
     messages: _aiChatMessages,
@@ -1138,9 +1250,9 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     executionSteps: _executionSteps,
     executionSuiteTitle: _executionSuiteTitle,
     executionProfileLabel: _executionProfileLabel,
-    showActivityDetails: _aiModelConfig.enableVerboseReasoning,
     onSend: _respondToAi,
     onRunPlan: _runAiPlan,
+    onOpenPlanInManualMode: _openAiPlanInManualMode,
     onOpenSettings: _openSettingsDialog,
     onExitAiMode: () => _setAiModeEnabled(false),
   );
@@ -1339,86 +1451,6 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       const SnackBar(
         content: Text('Custom suite builder is planned for upcoming release.'),
       ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Wrapper that holds a GlobalKey-accessible reference to the workspace's
-// internal message list so the dashboard can inject rich report messages.
-// ---------------------------------------------------------------------------
-
-class _AiAssistantWorkspaceHost extends StatefulWidget {
-  const _AiAssistantWorkspaceHost({
-    super.key,
-    required this.profiles,
-    required this.activeProfile,
-    required this.modelConfigured,
-    required this.running,
-    required this.messages,
-    required this.onAddMessage,
-    this.onTruncateMessages,
-    this.onPlanningStateChanged,
-    required this.activityMessages,
-    required this.executionSteps,
-    required this.executionSuiteTitle,
-    required this.executionProfileLabel,
-    this.showActivityDetails = false,
-    required this.onSend,
-    required this.onRunPlan,
-    required this.onOpenSettings,
-    required this.onExitAiMode,
-  });
-
-  final List<QaProfile> profiles;
-  final QaProfile activeProfile;
-  final bool modelConfigured;
-  final bool running;
-  final bool showActivityDetails;
-  final List<AiChatMessage> messages;
-  final ValueChanged<AiChatMessage> onAddMessage;
-  final ValueChanged<int>? onTruncateMessages;
-  final ValueChanged<bool>? onPlanningStateChanged;
-  final List<QaActivityMessage> activityMessages;
-  final List<AiExecutionStep> executionSteps;
-  final String executionSuiteTitle;
-  final String executionProfileLabel;
-  final Future<AiAssistantResponse> Function(
-    String input,
-    List<AiChatMessage> history,
-    AiModelEventCallback onEvent,
-  )
-  onSend;
-  final ValueChanged<AiTestPlan> onRunPlan;
-  final VoidCallback onOpenSettings;
-  final VoidCallback onExitAiMode;
-
-  @override
-  State<_AiAssistantWorkspaceHost> createState() =>
-      _AiAssistantWorkspaceHostState();
-}
-
-class _AiAssistantWorkspaceHostState extends State<_AiAssistantWorkspaceHost> {
-  @override
-  Widget build(BuildContext context) {
-    return AiAssistantWorkspace(
-      profiles: widget.profiles,
-      activeProfile: widget.activeProfile,
-      modelConfigured: widget.modelConfigured,
-      running: widget.running,
-      messages: widget.messages,
-      onAddMessage: widget.onAddMessage,
-      onTruncateMessages: widget.onTruncateMessages,
-      onPlanningStateChanged: widget.onPlanningStateChanged,
-      showActivityDetails: widget.showActivityDetails,
-      activityMessages: widget.activityMessages,
-      executionSteps: widget.executionSteps,
-      executionSuiteTitle: widget.executionSuiteTitle,
-      executionProfileLabel: widget.executionProfileLabel,
-      onSend: widget.onSend,
-      onRunPlan: widget.onRunPlan,
-      onOpenSettings: widget.onOpenSettings,
-      onExitAiMode: widget.onExitAiMode,
     );
   }
 }

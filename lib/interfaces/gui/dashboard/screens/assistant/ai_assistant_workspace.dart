@@ -13,8 +13,6 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/
 class AiAssistantWorkspace extends StatefulWidget {
   const AiAssistantWorkspace({
     super.key,
-    required this.profiles,
-    required this.activeProfile,
     required this.modelConfigured,
     required this.running,
     required this.messages,
@@ -26,17 +24,14 @@ class AiAssistantWorkspace extends StatefulWidget {
     required this.executionProfileLabel,
     required this.onSend,
     required this.onRunPlan,
+    this.onOpenPlanInManualMode,
     required this.onOpenSettings,
     required this.onExitAiMode,
-    this.showActivityDetails = false,
     this.onPlanningStateChanged,
   });
 
-  final List<QaProfile> profiles;
-  final QaProfile activeProfile;
   final bool modelConfigured;
   final bool running;
-  final bool showActivityDetails;
   final List<AiChatMessage> messages;
   final ValueChanged<AiChatMessage> onAddMessage;
   final ValueChanged<int>? onTruncateMessages;
@@ -55,6 +50,7 @@ class AiAssistantWorkspace extends StatefulWidget {
   )
   onSend;
   final ValueChanged<AiTestPlan> onRunPlan;
+  final ValueChanged<AiTestPlan>? onOpenPlanInManualMode;
   final VoidCallback onOpenSettings;
   final VoidCallback onExitAiMode;
 
@@ -70,13 +66,11 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
   bool _waiting = false;
   bool _logExpanded = false;
   final List<AiModelEvent> _modelEvents = <AiModelEvent>[];
-  DateTime? _lastReasoningRefresh;
   int _slashSelectedIndex = 0;
   String? _lastSlashQuery;
   TextEditingValue? _dismissedSlashPopupValue;
 
   List<AiModelEvent> get _visiblePlanningEvents {
-    if (widget.showActivityDetails) return _modelEvents;
     final errors = _modelEvents.where((e) => e.kind == AiModelEventKind.error);
     if (errors.isNotEmpty) return errors.toList();
     return const <AiModelEvent>[
@@ -192,7 +186,6 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
       _waiting = true;
       _slashSelectedIndex = 0;
       _modelEvents.clear();
-      _lastReasoningRefresh = null;
     });
 
     widget.onPlanningStateChanged?.call(true);
@@ -207,25 +200,24 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
       );
       if (!mounted) return;
       final plan = response.plan;
-      final shouldAutoRun = response.canExecute;
+      final hasValidatedPlan = response.canExecute;
       final planningSteps = _modelEvents
           .where((event) => event.kind == AiModelEventKind.status)
           .map((event) => event.message)
           .toSet()
           .toList(growable: false);
-      final activitySummary =
-          (widget.showActivityDetails && planningSteps.isNotEmpty)
-          ? AiRichPlanningSummary(
+      final activitySummary = planningSteps.isEmpty
+          ? null
+          : AiRichPlanningSummary(
               steps: planningSteps,
               elapsedMs: DateTime.now().difference(startedAt).inMilliseconds,
-            )
-          : null;
+            );
 
       widget.onAddMessage(
         AiChatMessage(
           role: AiChatRole.assistant,
-          text: shouldAutoRun
-              ? '${response.message}\n\nPlan validated for ${plan!.profileId}. Running preflight checks…'
+          text: hasValidatedPlan
+              ? '${response.message}\n\nPlan validated for ${plan!.profileId}. Executing test plan automatically…'
               : response.message,
           richContent:
               response.richContent ??
@@ -234,10 +226,13 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
                   : AiRichKnowledgeAnswer(answer: response.knowledge!)),
           activitySummary: activitySummary,
           pendingRequest: response.pendingRequest,
+          executablePlan: hasValidatedPlan ? plan : null,
         ),
       );
 
-      if (shouldAutoRun) widget.onRunPlan(plan!);
+      if (hasValidatedPlan && plan != null) {
+        widget.onRunPlan(plan);
+      }
     } catch (e) {
       if (e is OperationCanceledException) {
         return;
@@ -264,31 +259,12 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
 
   void _onModelEvent(AiModelEvent event) {
     if (!mounted) return;
-    if (event.kind == AiModelEventKind.reasoning &&
-        _modelEvents.isNotEmpty &&
-        _modelEvents.last.kind == AiModelEventKind.reasoning) {
-      final prior = _modelEvents.removeLast();
-      _modelEvents.add(
-        AiModelEvent(
-          kind: AiModelEventKind.reasoning,
-          message: '${prior.message}${event.message}',
-        ),
-      );
-    } else {
-      _modelEvents.add(event);
-    }
-
-    final now = DateTime.now();
-    final shouldThrottle =
-        event.kind == AiModelEventKind.reasoning &&
-        _lastReasoningRefresh != null &&
-        now.difference(_lastReasoningRefresh!) <
-            const Duration(milliseconds: 90);
-    if (!shouldThrottle) {
-      _lastReasoningRefresh = now;
-      setState(() {});
-      _scrollToBottom();
-    }
+    // Reasoning tokens are intentionally private. The GUI only presents
+    // safe lifecycle status and error events.
+    if (event.kind == AiModelEventKind.reasoning) return;
+    _modelEvents.add(event);
+    setState(() {});
+    _scrollToBottom();
   }
 
   void _handleCopyText(String text) {
@@ -304,7 +280,9 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
   }
 
   void _handleEditAndRetrigger(int index, String newText) {
-    if (_waiting || widget.running) return;
+    if (_waiting || widget.running) {
+      return;
+    }
     widget.onTruncateMessages?.call(index);
     _inputController.text = newText;
     _send();
@@ -314,8 +292,9 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
     if (_waiting ||
         widget.running ||
         index < 0 ||
-        index >= widget.messages.length)
+        index >= widget.messages.length) {
       return;
+    }
     int targetIndex = index;
     if (widget.messages[index].role != AiChatRole.user) {
       for (int i = index - 1; i >= 0; i--) {
@@ -381,6 +360,9 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
                               onCopyText: _handleCopyText,
                               onEditAndRetrigger: _handleEditAndRetrigger,
                               onRetrigger: _handleRetrigger,
+                              onRunPlan: widget.onRunPlan,
+                              onOpenPlanInManualMode:
+                                  widget.onOpenPlanInManualMode,
                             )
                           : AssistantWelcomeCanvas(
                               onSelectBentoAction: _runBentoAction,

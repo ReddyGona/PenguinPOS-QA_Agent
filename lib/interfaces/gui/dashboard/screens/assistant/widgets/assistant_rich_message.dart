@@ -12,9 +12,16 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/
 /// Content models stay in the AI layer; each visual card lives in its own
 /// widget so the chat renderer remains small and easy to extend.
 class AssistantRichMessage extends StatelessWidget {
-  const AssistantRichMessage({super.key, required this.content});
+  const AssistantRichMessage({
+    super.key,
+    required this.content,
+    this.onRunValidatedPlan,
+    this.onOpenInManualMode,
+  });
 
   final AiRichContent content;
+  final VoidCallback? onRunValidatedPlan;
+  final VoidCallback? onOpenInManualMode;
 
   @override
   Widget build(BuildContext context) {
@@ -22,7 +29,11 @@ class AssistantRichMessage extends StatelessWidget {
       AiRichKnowledgeAnswer answer => AssistantKnowledgeAnswerCard(
         answer: answer.answer,
       ),
-      AiRichPlanSummary summary => AssistantPlanSummaryCard(summary: summary),
+      AiRichPlanSummary summary => AssistantPlanSummaryCard(
+        summary: summary,
+        onRunValidatedPlan: onRunValidatedPlan,
+        onOpenInManualMode: onOpenInManualMode,
+      ),
       AiRichTestReport report => AssistantTestReportCard(report: report),
       AiRichOrderReport report => AssistantOrderReportCard(report: report),
       AiRichPlanningSummary summary => AssistantPlanningSummaryCard(

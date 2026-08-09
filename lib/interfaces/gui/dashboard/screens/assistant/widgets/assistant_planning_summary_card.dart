@@ -18,7 +18,7 @@ class AssistantPlanningSummaryCard extends StatefulWidget {
 
 class _AssistantPlanningSummaryCardState
     extends State<AssistantPlanningSummaryCard> {
-  var _expanded = false;
+  var _expanded = true;
 
   @override
   Widget build(BuildContext context) {

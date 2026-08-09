@@ -2,26 +2,45 @@ import 'dart:convert';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/ai/models/qa_knowledge_catalogue.dart';
+import 'package:penguin_pos_qa_agent/ai/orchestration/knowledge_intent_router.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/slash_command_parser.dart';
 import 'package:penguin_pos_qa_agent/ai/providers/ai_model_provider.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
-import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 
 /// Constrained planner: no tool access, no credentials, no driver commands.
 class AiOrchestrator {
   AiOrchestrator({
     required this.profiles,
+    this.activeProfile,
     required this.provider,
     SlashCommandParser? slashCommandParser,
     QaKnowledgeCatalogue? knowledgeCatalogue,
+    KnowledgeIntentRouter? knowledgeIntentRouter,
   }) : _slashCommandParser = slashCommandParser ?? SlashCommandParser(),
        _knowledgeCatalogue =
-           knowledgeCatalogue ?? QaKnowledgeCatalogue.defaultCatalogue;
+           knowledgeCatalogue ?? QaKnowledgeCatalogue.defaultCatalogue,
+       _knowledgeIntentRouter =
+           knowledgeIntentRouter ?? const KnowledgeIntentRouter();
 
   final List<QaProfile> profiles;
+  final QaProfile? activeProfile;
   final AiModelProvider? provider;
   final SlashCommandParser _slashCommandParser;
   final QaKnowledgeCatalogue _knowledgeCatalogue;
+  final KnowledgeIntentRouter _knowledgeIntentRouter;
+
+  QaProfile? _resolveProfile(String input) {
+    final explicit = _slashCommandParser.findProfileInInput(input, profiles);
+    if (explicit != null) return explicit;
+
+    if (activeProfile != null && !activeProfile!.isProduction) {
+      return activeProfile;
+    }
+
+    final nonProd = profiles.where((p) => !p.isProduction);
+    return nonProd.isNotEmpty ? nonProd.first : null;
+  }
 
   Future<AiAssistantResponse> respond({
     required String input,
@@ -34,7 +53,7 @@ class AiOrchestrator {
     // reference such as "Explain /login" cannot accidentally prepare a run.
     final knowledgeResponse = _tryAnswerKnowledgeQuestion(input, history);
     if (knowledgeResponse != null) {
-      await _emitKnowledgeEvents(onEvent);
+      _emitKnowledgeEvents(onEvent);
       return knowledgeResponse;
     }
 
@@ -60,6 +79,17 @@ class AiOrchestrator {
     );
     if (slashResponse != null) {
       return _validate(slashResponse, input: input, history: history);
+    }
+
+    // Login is a fixed, safe workflow. Resolve common natural-language
+    // requests locally so a provider cannot turn a simple login request into
+    // malformed plan JSON (or an order-oriented clarification).
+    final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
+      input,
+      profiles,
+    );
+    if (naturalLoginResponse != null) {
+      return _validate(naturalLoginResponse, input: input, history: history);
     }
 
     final newOrderDraft = _startOrderDraft(input);
@@ -191,15 +221,20 @@ class AiOrchestrator {
   AiAssistantResponse? _startOrderDraft(String input) {
     final normalized = input.toLowerCase();
     if (!RegExp(
-      r'\b(order|orders|place|punch|checkout)\b',
+      r'\b(order|orders|place|punch|checkout|buy|purchase|sale|cart|add)\b',
     ).hasMatch(normalized)) {
       return null;
     }
     final skuCodes = _skuCodesIn(input);
     if (skuCodes.isEmpty) return null;
 
-    final profile = _slashCommandParser.findProfileInInput(input, profiles);
+    final profile = _resolveProfile(input);
     final ordersCount = _orderCountIn(input) ?? 1;
+    final strategy =
+        _itemStrategyIn(input) ??
+        (skuCodes.length == 1 && ordersCount > 1
+            ? AiItemStrategy.sameForAll
+            : null);
     return _orderDraftResponse(
       AiPendingRequest(
         workflow: AiWorkflow.orderCashPayment,
@@ -208,23 +243,33 @@ class AiOrchestrator {
         skuCodes: skuCodes,
         itemType: _itemTypeIn(input),
         entryMode: _entryModeIn(input),
-        itemStrategy: _itemStrategyIn(input),
+        itemStrategy: strategy,
         missingFields: const <String>[],
       ),
     );
   }
 
   AiPendingRequest _mergeOrderDraft(AiPendingRequest current, String input) {
-    final profile = _slashCommandParser.findProfileInInput(input, profiles);
+    final profile = _resolveProfile(input);
     final suppliedSkus = _skuCodesIn(input);
+    final effectiveSkus = suppliedSkus.isEmpty
+        ? current.skuCodes
+        : suppliedSkus;
+    final effectiveOrdersCount = _orderCountIn(input) ?? current.ordersCount;
+    final effectiveStrategy =
+        _itemStrategyIn(input) ??
+        current.itemStrategy ??
+        (effectiveSkus.length == 1 && effectiveOrdersCount > 1
+            ? AiItemStrategy.sameForAll
+            : null);
     return AiPendingRequest(
       workflow: AiWorkflow.orderCashPayment,
-      ordersCount: _orderCountIn(input) ?? current.ordersCount,
+      ordersCount: effectiveOrdersCount,
       profileId: profile?.id ?? current.profileId,
-      skuCodes: suppliedSkus.isEmpty ? current.skuCodes : suppliedSkus,
+      skuCodes: effectiveSkus,
       itemType: _itemTypeIn(input) ?? current.itemType,
       entryMode: _entryModeIn(input) ?? current.entryMode,
-      itemStrategy: _itemStrategyIn(input) ?? current.itemStrategy,
+      itemStrategy: effectiveStrategy,
       missingFields: const <String>[],
     );
   }
@@ -257,53 +302,8 @@ class AiOrchestrator {
       missingFields: missing,
     );
     if (missing.isNotEmpty) {
-      final previewItems = draft.skuCodes
-          .map((sku) {
-            final isBizerbaSku = RegExp(
-              r'^[0-9]+W[0-9.]+$',
-              caseSensitive: false,
-            ).hasMatch(sku);
-            if (isBizerbaSku) {
-              return OrderItem(
-                skuCode: sku,
-                type: SkuItemType.bizerba,
-                entryMode: ItemEntryMode.scan,
-              );
-            }
-            final type =
-                draft.itemType != null && draft.itemType != SkuItemType.bizerba
-                ? draft.itemType!
-                : SkuItemType.nonWeighed;
-            final entryMode =
-                draft.entryMode != null && draft.entryMode != ItemEntryMode.scan
-                ? draft.entryMode!
-                : ItemEntryMode.manual;
-            return OrderItem(skuCode: sku, type: type, entryMode: entryMode);
-          })
-          .toList(growable: false);
-
-      final previewItemRows = previewItems
-          .map((item) {
-            final typeLabel = item.type == SkuItemType.bizerba
-                ? 'Bizerba'
-                : (item.type == SkuItemType.weighed
-                      ? 'Weighed'
-                      : 'Non-Weighed');
-            final modeLabel = item.entryMode == ItemEntryMode.scan
-                ? 'Scan (Barcode)'
-                : 'Manual (Numpad)';
-            final allocationLabel =
-                draft.itemStrategy == AiItemStrategy.perOrder
-                ? 'Per Order Allocation'
-                : 'All ${draft.ordersCount} ${draft.ordersCount == 1 ? 'Order' : 'Orders'}';
-            return AiOrderItemRow(
-              skuCode: item.skuCode,
-              typeLabel: typeLabel,
-              entryModeLabel: modeLabel,
-              allocationLabel: allocationLabel,
-            );
-          })
-          .toList(growable: false);
+      final previewItems = _orderItemsForDraft(draft);
+      final previewItemRows = _orderItemRows(previewItems, draft);
 
       final richPreview = previewItemRows.isNotEmpty
           ? AiRichPlanSummary(
@@ -328,33 +328,7 @@ class AiOrchestrator {
       );
     }
 
-    final items = draft.skuCodes
-        .map((sku) {
-          final isBizerbaSku = RegExp(
-            r'^[0-9]+W[0-9.]+$',
-            caseSensitive: false,
-          ).hasMatch(sku);
-          if (isBizerbaSku) {
-            return OrderItem(
-              skuCode: sku,
-              type: SkuItemType.bizerba,
-              entryMode: ItemEntryMode.scan,
-            );
-          }
-          // Non-bizerba SKU: use the draft's type/mode only when it is
-          // NOT bizerba, otherwise fall back to nonWeighed / manual so
-          // that a global "bizerba" keyword does not poison short codes.
-          final type =
-              draft.itemType != null && draft.itemType != SkuItemType.bizerba
-              ? draft.itemType!
-              : SkuItemType.nonWeighed;
-          final entryMode =
-              draft.entryMode != null && draft.entryMode != ItemEntryMode.scan
-              ? draft.entryMode!
-              : ItemEntryMode.manual;
-          return OrderItem(skuCode: sku, type: type, entryMode: entryMode);
-        })
-        .toList(growable: false);
+    final items = _orderItemsForDraft(draft);
 
     final plan = draft.itemStrategy == AiItemStrategy.perOrder
         ? AiTestPlan(
@@ -375,25 +349,7 @@ class AiOrchestrator {
             items: items,
           );
 
-    final orderItemRows = items
-        .map((item) {
-          final typeLabel = item.type == SkuItemType.bizerba
-              ? 'Bizerba'
-              : (item.type == SkuItemType.weighed ? 'Weighed' : 'Non-Weighed');
-          final modeLabel = item.entryMode == ItemEntryMode.scan
-              ? 'Scan (Barcode)'
-              : 'Manual (Numpad)';
-          final allocationLabel = draft.itemStrategy == AiItemStrategy.perOrder
-              ? 'Per Order Allocation'
-              : 'All ${draft.ordersCount} ${draft.ordersCount == 1 ? 'Order' : 'Orders'}';
-          return AiOrderItemRow(
-            skuCode: item.skuCode,
-            typeLabel: typeLabel,
-            entryModeLabel: modeLabel,
-            allocationLabel: allocationLabel,
-          );
-        })
-        .toList(growable: false);
+    final orderItemRows = _orderItemRows(items, draft);
 
     final richSummary = AiRichPlanSummary(
       profileLabel: draft.profileId ?? 'Default Profile',
@@ -421,6 +377,58 @@ class AiOrchestrator {
       history: const <AiChatMessage>[],
     );
   }
+
+  /// Converts a chat draft into the same safe item list for both the preview
+  /// and the executable plan. Bizerba barcodes remain scan-only; other SKUs
+  /// use the explicitly selected type and entry mode, or safe defaults.
+  List<OrderItem> _orderItemsForDraft(AiPendingRequest draft) => draft.skuCodes
+      .map((sku) {
+        if (_isBizerbaSku(sku)) {
+          return OrderItem(
+            skuCode: sku,
+            type: SkuItemType.bizerba,
+            entryMode: ItemEntryMode.scan,
+          );
+        }
+        return OrderItem(
+          skuCode: sku,
+          type: draft.itemType == SkuItemType.bizerba
+              ? SkuItemType.nonWeighed
+              : draft.itemType ?? SkuItemType.nonWeighed,
+          entryMode: draft.entryMode == ItemEntryMode.scan
+              ? ItemEntryMode.manual
+              : draft.entryMode ?? ItemEntryMode.manual,
+        );
+      })
+      .toList(growable: false);
+
+  List<AiOrderItemRow> _orderItemRows(
+    List<OrderItem> items,
+    AiPendingRequest draft,
+  ) {
+    final allocationLabel = draft.itemStrategy == AiItemStrategy.perOrder
+        ? 'Per Order Allocation'
+        : 'All ${draft.ordersCount} ${draft.ordersCount == 1 ? 'Order' : 'Orders'}';
+    return items
+        .map(
+          (item) => AiOrderItemRow(
+            skuCode: item.skuCode,
+            typeLabel: switch (item.type) {
+              SkuItemType.bizerba => 'Bizerba',
+              SkuItemType.weighed => 'Weighed',
+              SkuItemType.nonWeighed => 'Non-Weighed',
+            },
+            entryModeLabel: item.entryMode == ItemEntryMode.scan
+                ? 'Scan (Barcode)'
+                : 'Manual (Numpad)',
+            allocationLabel: allocationLabel,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  bool _isBizerbaSku(String sku) =>
+      RegExp(r'^[0-9]+W[0-9.]+$', caseSensitive: false).hasMatch(sku);
 
   String _orderDraftPrompt(AiPendingRequest draft) {
     if (draft.missingFields.contains('profile')) {
@@ -466,9 +474,15 @@ class AiOrchestrator {
         }).toList();
 
     final matches = RegExp(
-      r'\bskus?\s*(?:are|:)?\s*([0-9A-Za-z][0-9A-Za-z,\s.]*?)(?=\s+(?:in|for|with|use|via|using|back|same|all|the|and)\b|\s*$)',
+      r'\b(?:skus?|items?|products?|barcodes?)\s*(?:are|:)?\s*([0-9A-Za-z][0-9A-Za-z,\s.]*?)(?=\s+(?:in|for|with|use|via|using|back|same|all|the|and)\b|\s*$)',
       caseSensitive: false,
     ).allMatches(input);
+
+    final multiplierMatch = RegExp(
+      r'\b(?:repeat\s+)?(\d+)\s*(?:times|x|iterations?|reps?)\b',
+      caseSensitive: false,
+    ).firstMatch(input);
+    final multiplierDigit = multiplierMatch?.group(1);
 
     final standardSkus = <String>[];
     for (final match in matches) {
@@ -481,6 +495,12 @@ class AiOrchestrator {
             const isKeyword = <String>{
               'sku',
               'skus',
+              'item',
+              'items',
+              'product',
+              'products',
+              'barcode',
+              'barcodes',
               'are',
               'and',
               'in',
@@ -514,8 +534,12 @@ class AiOrchestrator {
               'punch',
               'place',
               'checkout',
+              'times',
+              'reps',
+              'iterations',
             };
             if (isKeyword.contains(lower)) return false;
+            if (multiplierDigit != null && sku == multiplierDigit) return false;
             return RegExp(r'\d').hasMatch(sku);
           });
       standardSkus.addAll(tokens);
@@ -525,18 +549,69 @@ class AiOrchestrator {
     return result;
   }
 
+  static final Map<String, int> _wordToNumber = <String, int>{
+    'one': 1,
+    'two': 2,
+    'three': 3,
+    'four': 4,
+    'five': 5,
+    'six': 6,
+    'seven': 7,
+    'eight': 8,
+    'nine': 9,
+    'ten': 10,
+  };
+
   int? _orderCountIn(String input) {
-    final match = RegExp(
-      r'\b(\d+)\s+orders?\b',
+    final lower = input.toLowerCase();
+
+    // 1. Check multiplier phrases first (e.g., "3 times", "three times", "3x", "repeat 3 times", "3 iterations")
+    final multiplierMatch = RegExp(
+      r'\b(?:repeat\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:times|x|iterations?|reps?)\b',
       caseSensitive: false,
-    ).firstMatch(input);
-    final parsed = int.tryParse(match?.group(1) ?? '');
-    return parsed?.clamp(1, 50).toInt();
+    ).firstMatch(lower);
+    if (multiplierMatch != null) {
+      final token = multiplierMatch.group(1)!;
+      final parsed = int.tryParse(token) ?? _wordToNumber[token];
+      if (parsed != null && parsed > 0) {
+        return parsed.clamp(1, 50);
+      }
+    }
+
+    // 2. Check "N orders" (digit or word number: e.g. "3 orders", "three orders")
+    final orderMatch = RegExp(
+      r'\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+orders?\b',
+      caseSensitive: false,
+    ).firstMatch(lower);
+    if (orderMatch != null) {
+      final token = orderMatch.group(1)!;
+      final parsed = int.tryParse(token) ?? _wordToNumber[token];
+      if (parsed != null && parsed > 0) {
+        return parsed.clamp(1, 50);
+      }
+    }
+
+    // 3. Fallback: check "x N" or "xN" (e.g. "x 3")
+    final xMatch = RegExp(
+      r'\bx\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b',
+      caseSensitive: false,
+    ).firstMatch(lower);
+    if (xMatch != null) {
+      final token = xMatch.group(1)!;
+      final parsed = int.tryParse(token) ?? _wordToNumber[token];
+      if (parsed != null && parsed > 0) {
+        return parsed.clamp(1, 50);
+      }
+    }
+
+    return null;
   }
 
   SkuItemType? _itemTypeIn(String input) {
     final normalized = input.toLowerCase();
-    if (RegExp(r'\bnon[-\s]?weighed\b').hasMatch(normalized)) {
+    if (RegExp(
+      r'\b(non[-\s]?weighed|non[-\s]?weighted|regular|standard|unit)\b',
+    ).hasMatch(normalized)) {
       return SkuItemType.nonWeighed;
     }
     if (normalized.contains('bizerba') || normalized.contains('bzerba')) {
@@ -550,7 +625,9 @@ class AiOrchestrator {
 
   ItemEntryMode? _entryModeIn(String input) {
     final normalized = input.toLowerCase();
-    if (normalized.contains('manual') || normalized.contains('numpad')) {
+    if (RegExp(
+      r'\b(manual|numpad|type|typed|key|keyed)\b',
+    ).hasMatch(normalized)) {
       return ItemEntryMode.manual;
     }
     if (normalized.contains('scan') || normalized.contains('barcode')) {
@@ -665,41 +742,15 @@ class AiOrchestrator {
     String input,
     List<AiChatMessage> history,
   ) {
-    final normalized = input.trim().toLowerCase();
-    if (normalized.isEmpty || _isExplicitExecutionRequest(normalized)) {
+    final query = _knowledgeIntentRouter.classify(input);
+    if (!query.isKnowledgeQuestion) {
       return null;
     }
-
-    final asksForProfiles = RegExp(
-      r'\b(profile|profiles|environment|environments|target|targets)\b',
-    ).hasMatch(normalized);
-    final asksForHelp = RegExp(
-      r'(^|\b)(help|supported|capabilities|what can i (run|test))\b',
-    ).hasMatch(normalized);
-    final asksForCases = RegExp(
-      r'\b(test cases?|scenarios?|tests? (exist|available|are there))\b',
-    ).hasMatch(normalized);
-    final asksForRunnable = RegExp(
-      r'\b(runnable|available to run|can i run|i can run|can run|what can i (run|test))\b',
-    ).hasMatch(normalized);
-    final asksForExplanation = RegExp(
-      r'\b(explain|describe|what is|what does|how does|flow|journey)\b',
-    ).hasMatch(normalized);
-    final referencesKnownFeature = RegExp(
-      r'/(login|orders?|tests?)\b|\b(login|terminal|order|checkout|cash|payment|sku|weighed)\b',
-    ).hasMatch(normalized);
-
-    if (asksForProfiles && !referencesKnownFeature) {
+    if (query.intent == KnowledgeIntent.profiles) {
       return _profileAnswer();
     }
-    if (asksForHelp && !referencesKnownFeature && !asksForRunnable) {
+    if (query.intent == KnowledgeIntent.help) {
       return _helpAnswer();
-    }
-    if (!(asksForCases ||
-        asksForRunnable ||
-        asksForExplanation ||
-        (asksForHelp && referencesKnownFeature))) {
-      return null;
     }
 
     final mentionedProfiles = _profilesMentionedIn(input);
@@ -721,10 +772,7 @@ class AiOrchestrator {
 
     final explicitlyMatchedSuites = _knowledgeCatalogue
         .findExplicitSuitesForQuery(input);
-    final referencesPreviousAnswer = RegExp(
-      r'\b(above|previous|prior|that|this|same|it)\b',
-    ).hasMatch(normalized);
-    final contextSuites = referencesPreviousAnswer
+    final contextSuites = query.referencesPreviousAnswer
         ? _lastKnowledgeSuites(history)
         : const <QaKnowledgeSuite>[];
     final suites = explicitlyMatchedSuites.isNotEmpty
@@ -734,19 +782,22 @@ class AiOrchestrator {
     // Listing every available suite is useful for broad catalogue questions,
     // but it is misleading for an ambiguous explanation or flowchart request.
     if (suites.isEmpty &&
-        (asksForExplanation || referencesPreviousAnswer) &&
-        !asksForRunnable &&
-        !asksForCases) {
+        (query.intent == KnowledgeIntent.explainFlow ||
+            query.referencesPreviousAnswer) &&
+        query.intent != KnowledgeIntent.runnableSuites &&
+        query.intent != KnowledgeIntent.testCases) {
       return _clarifyKnowledgeScope();
     }
 
     final resolvedSuites = suites.isNotEmpty
         ? suites
         : _knowledgeCatalogue.findSuitesForQuery(input);
-    if (asksForRunnable) {
+    if (query.intent == KnowledgeIntent.runnableSuites) {
       return _runnableSuitesAnswer(resolvedSuites, mentionedProfiles);
     }
-    if (asksForCases) return _testCasesAnswer(resolvedSuites);
+    if (query.intent == KnowledgeIntent.testCases) {
+      return _testCasesAnswer(resolvedSuites);
+    }
     return _flowAnswer(resolvedSuites);
   }
 
@@ -775,17 +826,6 @@ class AiOrchestrator {
       if (suites.isNotEmpty) return suites;
     }
     return const <QaKnowledgeSuite>[];
-  }
-
-  bool _isExplicitExecutionRequest(String input) {
-    if (input.trim().startsWith('/')) return true;
-    // Read-only forms such as "what can I run" must remain catalogue queries.
-    if (RegExp(r'\b(what|which) can i (run|test)\b').hasMatch(input)) {
-      return false;
-    }
-    return RegExp(
-      r'(^|\b)(go ahead(?: and)?|please|can you|run|execute|start|launch)\s+(?:the\s+)?(?:tests?\s+)?(?:/)?(login|orders?|checkout|cash|payment)',
-    ).hasMatch(input);
   }
 
   AiAssistantResponse _profileAnswer() {
@@ -1126,7 +1166,7 @@ class AiOrchestrator {
         .toList(growable: false);
   }
 
-  Future<void> _emitKnowledgeEvents(AiModelEventCallback? onEvent) async {
+  void _emitKnowledgeEvents(AiModelEventCallback? onEvent) {
     onEvent?.call(
       const AiModelEvent(
         kind: AiModelEventKind.status,
@@ -1135,7 +1175,6 @@ class AiOrchestrator {
         progress: 0.2,
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 260));
     onEvent?.call(
       const AiModelEvent(
         kind: AiModelEventKind.status,
@@ -1144,7 +1183,6 @@ class AiOrchestrator {
         progress: 0.5,
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 260));
     onEvent?.call(
       const AiModelEvent(
         kind: AiModelEventKind.status,
@@ -1153,7 +1191,6 @@ class AiOrchestrator {
         progress: 0.8,
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 260));
     onEvent?.call(
       const AiModelEvent(
         kind: AiModelEventKind.status,

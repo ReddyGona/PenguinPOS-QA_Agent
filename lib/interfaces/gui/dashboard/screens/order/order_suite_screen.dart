@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/widgets/order_config_tab.dart';

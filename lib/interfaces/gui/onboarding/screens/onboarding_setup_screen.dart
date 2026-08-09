@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/onboarding/widgets/credentials_step.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/onboarding/widgets/onboarding_step_header.dart';

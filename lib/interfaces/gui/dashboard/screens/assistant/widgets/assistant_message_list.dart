@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_execution_tracker.dart';
@@ -21,6 +20,8 @@ class AssistantMessageList extends StatelessWidget {
     this.onEditAndRetrigger,
     this.onRetrigger,
     this.onCopyText,
+    this.onRunPlan,
+    this.onOpenPlanInManualMode,
   });
 
   final List<AiChatMessage> messages;
@@ -34,6 +35,8 @@ class AssistantMessageList extends StatelessWidget {
   final void Function(int index, String newText)? onEditAndRetrigger;
   final void Function(int index)? onRetrigger;
   final void Function(String text)? onCopyText;
+  final ValueChanged<AiTestPlan>? onRunPlan;
+  final ValueChanged<AiTestPlan>? onOpenPlanInManualMode;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +80,8 @@ class AssistantMessageList extends StatelessWidget {
           message: message,
           onRetrigger: onRetrigger,
           onCopyText: onCopyText,
+          onRunPlan: onRunPlan,
+          onOpenPlanInManualMode: onOpenPlanInManualMode,
         );
       },
     );
@@ -280,12 +285,16 @@ class _AssistantMessageTile extends StatelessWidget {
     required this.message,
     this.onRetrigger,
     this.onCopyText,
+    this.onRunPlan,
+    this.onOpenPlanInManualMode,
   });
 
   final int messageIndex;
   final AiChatMessage message;
   final void Function(int index)? onRetrigger;
   final void Function(String text)? onCopyText;
+  final ValueChanged<AiTestPlan>? onRunPlan;
+  final ValueChanged<AiTestPlan>? onOpenPlanInManualMode;
 
   @override
   Widget build(BuildContext context) {
@@ -329,7 +338,17 @@ class _AssistantMessageTile extends StatelessWidget {
                       ),
                     if (richContent != null) ...<Widget>[
                       if (message.text.isNotEmpty) const SizedBox(height: 12),
-                      AssistantRichMessage(content: richContent),
+                      AssistantRichMessage(
+                        content: richContent,
+                        onRunValidatedPlan: message.executablePlan == null
+                            ? null
+                            : () => onRunPlan?.call(message.executablePlan!),
+                        onOpenInManualMode: message.executablePlan == null
+                            ? null
+                            : () => onOpenPlanInManualMode?.call(
+                                message.executablePlan!,
+                              ),
+                      ),
                     ],
                     const SizedBox(height: 6),
                     Row(

@@ -1,5 +1,5 @@
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
-import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 
 /// Fast local shortcuts. These never invoke the model and never execute a test.
 class SlashCommandParser {
@@ -27,7 +27,6 @@ class SlashCommandParser {
         return _buildResponseForWorkflowAndProfile(
           pendingWorkflow,
           matchedProfile,
-          profiles,
         );
       }
     }
@@ -77,15 +76,52 @@ class SlashCommandParser {
     return _buildResponseForWorkflowAndProfile(
       workflow,
       profile,
-      profiles,
       ordersCount: ordersCount,
+    );
+  }
+
+  /// Handles unambiguous login requests without sending them to a model.
+  ///
+  /// Login is a fixed workflow, so phrases such as "test login in kpn dev"
+  /// should have the same deterministic behaviour as `/login`. Keeping this
+  /// here also means profile matching and the pending-profile flow stay in one
+  /// place.
+  AiAssistantResponse? parseNaturalWorkflow(
+    String input,
+    List<QaProfile> profiles,
+  ) {
+    final normalized = input.trim().toLowerCase();
+    if (normalized.isEmpty ||
+        !RegExp(r'\b(login|log\s+in|sign\s+in)\b').hasMatch(normalized) ||
+        RegExp(
+          r'\b(explain|what|how|why|meaning|define)\b',
+        ).hasMatch(normalized)) {
+      return null;
+    }
+
+    final profile = findProfileInInput(input, profiles);
+    if (profile == null) {
+      return AiAssistantResponse(
+        state: AiPlanState.needsInput,
+        message:
+            'Choose an approved target profile, for example `${profiles.isEmpty ? 'kpn-stage' : profiles.first.id}`.',
+        missingFields: const <String>['profile'],
+        pendingRequest: const AiPendingRequest(
+          workflow: AiWorkflow.loginFullSequence,
+          missingFields: <String>['profile'],
+        ),
+      );
+    }
+
+    return _buildResponseForWorkflowAndProfile(
+      AiWorkflow.loginFullSequence,
+      profile,
     );
   }
 
   AiAssistantResponse _buildResponseForWorkflowAndProfile(
     AiWorkflow workflow,
-    QaProfile profile,
-    List<QaProfile> profiles, {
+    QaProfile profile, {
     int ordersCount = 1,
   }) {
     final plan = AiTestPlan(

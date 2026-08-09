@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/ai_orchestrator.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/slash_command_parser.dart';
-import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 
 void main() {
   group('AI planning guardrails', () {
@@ -34,6 +34,33 @@ void main() {
       expect(response, isNotNull);
       expect(response!.plan, isNull);
       expect(response.missingFields, contains('profile'));
+    });
+
+    test(
+      'natural-language login selects the configured dev profile locally',
+      () {
+        final response = SlashCommandParser().parseNaturalWorkflow(
+          'test login case in kpn dev',
+          profiles,
+        );
+
+        expect(response, isNotNull);
+        expect(response!.state, AiPlanState.readyForConfirmation);
+        expect(response.plan!.workflow, AiWorkflow.loginFullSequence);
+        expect(response.plan!.profileId, 'kpn-dev');
+      },
+    );
+
+    test('natural-language login without a profile asks for one', () {
+      final response = SlashCommandParser().parseNaturalWorkflow(
+        'verify the login flow',
+        profiles,
+      );
+
+      expect(response, isNotNull);
+      expect(response!.plan, isNull);
+      expect(response.missingFields, contains('profile'));
+      expect(response.pendingRequest!.workflow, AiWorkflow.loginFullSequence);
     });
 
     test(

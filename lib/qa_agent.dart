@@ -1,12 +1,7 @@
 library;
 
-// ── Core: Models, Speed Controls & Reporting ─────────────────────────────────
-export 'core/event_bus.dart';
+// ── Core: Shared safety and execution utilities ──────────────────────────────
 export 'core/execution_speed.dart';
-export 'core/models.dart';
-export 'core/reporting/json_reporter.dart';
-export 'core/result.dart';
-export 'core/scenario_parser.dart';
 
 // ── Automation Engine: Test Runners & Key Contracts ──────────────────────────
 export 'automation/login/login_keys.dart';

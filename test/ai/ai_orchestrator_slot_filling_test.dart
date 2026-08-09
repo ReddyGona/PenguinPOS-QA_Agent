@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/ai_orchestrator.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
-import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 
 void main() {
   AiOrchestrator buildOrchestrator() =>
@@ -97,6 +97,31 @@ void main() {
   );
 
   test(
+    'parses plain-English order wording and defaults safe item fields',
+    () async {
+      final response = await buildOrchestrator().respond(
+        input: 'place an order with sku 22, 11 in kpn dev',
+        history: const <AiChatMessage>[],
+      );
+
+      expect(response.canExecute, isTrue);
+      expect(response.plan!.profileId, 'kpn-dev');
+      expect(response.plan!.items.map((item) => item.skuCode), <String>[
+        '22',
+        '11',
+      ]);
+      expect(
+        response.plan!.items.map((item) => item.type),
+        everyElement(SkuItemType.nonWeighed),
+      );
+      expect(
+        response.plan!.items.map((item) => item.entryMode),
+        everyElement(ItemEntryMode.manual),
+      );
+    },
+  );
+
+  test(
     'classifies mixed bizerba and manual SKUs per-item in a single prompt',
     () async {
       final orchestrator = buildOrchestrator();
@@ -133,6 +158,55 @@ void main() {
         response.plan!.items.map((i) => i.skuCode),
         isNot(contains('sku')),
       );
+    },
+  );
+
+  test(
+    'correctly parses order count multiplier phrases such as 3 times',
+    () async {
+      final orchestrator = buildOrchestrator();
+      final response = await orchestrator.respond(
+        input:
+            'punch one order with sku 22 non weighted manual mode 3 times in kpn dev',
+        history: const <AiChatMessage>[],
+      );
+
+      expect(response.canExecute, isTrue);
+      expect(response.plan, isNotNull);
+      expect(response.plan!.ordersCount, 3);
+      expect(response.plan!.profileId, 'kpn-dev');
+      expect(response.plan!.items.first.skuCode, '22');
+      expect(response.plan!.items.first.type, SkuItemType.nonWeighed);
+      expect(response.plan!.items.first.entryMode, ItemEntryMode.manual);
+    },
+  );
+
+  test(
+    'falls back to active non-prod profile when prompt omits explicit environment',
+    () async {
+      const kpnDev = QaProfile(
+        id: 'kpn-dev',
+        label: 'KPN DEV',
+        entity: 'kpn',
+        environment: 'dev',
+      );
+      final orchestrator = AiOrchestrator(
+        profiles: QaProfile.values,
+        activeProfile: kpnDev,
+        provider: null,
+      );
+      final response = await orchestrator.respond(
+        input: 'punch 3 orders with sku: 22 in manual mode, non weighted',
+        history: const <AiChatMessage>[],
+      );
+
+      expect(response.canExecute, isTrue);
+      expect(response.plan, isNotNull);
+      expect(response.plan!.ordersCount, 3);
+      expect(response.plan!.profileId, 'kpn-dev');
+      expect(response.plan!.items.first.skuCode, '22');
+      expect(response.plan!.items.first.type, SkuItemType.nonWeighed);
+      expect(response.plan!.items.first.entryMode, ItemEntryMode.manual);
     },
   );
 }

@@ -6,6 +6,7 @@ import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/ai_orchestrator.dart';
 import 'package:penguin_pos_qa_agent/ai/providers/ai_model_provider.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/ai_assistant_workspace.dart';
 
@@ -220,7 +221,7 @@ void main() {
     },
   );
 
-  testWidgets('auto-runs a validated plan and keeps status in the chat', (
+  testWidgets('requires review before running a validated plan', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1280, 820));
@@ -236,8 +237,6 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: AiAssistantWorkspace(
-            profiles: QaProfile.values,
-            activeProfile: QaProfile.values.first,
             modelConfigured: true,
             running: false,
             messages: messages,
@@ -265,12 +264,26 @@ void main() {
                 message: 'Plan ready.',
                 state: AiPlanState.readyForConfirmation,
                 plan: plan,
+                richContent: const AiRichPlanSummary(
+                  profileLabel: 'KPN STAGE',
+                  workflowLabel: 'Order & Cash Payment (1 Order)',
+                  scenarios: <AiScenarioRow>[
+                    AiScenarioRow(name: 'Cash payment'),
+                  ],
+                  orderItems: <AiOrderItemRow>[
+                    AiOrderItemRow(
+                      skuCode: '22',
+                      typeLabel: 'Non-Weighed',
+                      entryModeLabel: 'Manual (Numpad)',
+                      allocationLabel: 'All 1 Order',
+                    ),
+                  ],
+                ),
               );
             },
             onRunPlan: (_) => runs++,
             onOpenSettings: () {},
             onExitAiMode: () {},
-            showActivityDetails: true,
           ),
         ),
       ),
@@ -280,13 +293,9 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pump();
 
+    // Validated non-prod plan is automatically triggered
     expect(runs, 1);
-    expect(find.textContaining('Running preflight checks'), findsOneWidget);
-    expect(find.text('Review & Run'), findsNothing);
     expect(find.textContaining('2 checks'), findsOneWidget);
-
-    await tester.tap(find.textContaining('2 checks'));
-    await tester.pump();
     expect(find.text('Matching target profile…'), findsOneWidget);
   });
 }

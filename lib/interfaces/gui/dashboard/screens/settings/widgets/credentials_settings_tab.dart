@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/settings_form_card.dart';
 
 /// Tab view for managing target environment profile, login ID, password, and terminal unlock PIN.

@@ -9,32 +9,48 @@ void main() {
     home: Scaffold(body: AssistantRichMessage(content: content)),
   );
 
-  testWidgets('preparation activity expands safe lifecycle steps inline', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      host(
-        const AiRichPlanningSummary(
-          steps: <String>[
-            'Parsing request…',
-            'Matching target profile…',
-            'Validating plan against guardrails…',
-          ],
+  testWidgets(
+    'preparation activity shows decision history line by line by default',
+    (tester) async {
+      await tester.pumpWidget(
+        host(
+          const AiRichPlanningSummary(
+            steps: <String>[
+              'Parsing request…',
+              'Matching target profile…',
+              'Validating plan against guardrails…',
+            ],
+            elapsedMs: 250,
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(find.text('Preparation activity · 3 checks'), findsOneWidget);
-    expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsOneWidget);
+      // Decision history is expanded line by line by default
+      expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsOneWidget);
+      expect(find.text('Parsing request…'), findsOneWidget);
+      expect(find.text('Matching target profile…'), findsOneWidget);
+      expect(find.text('Validating plan against guardrails…'), findsOneWidget);
+    },
+  );
 
-    await tester.tap(find.text('Preparation activity · 3 checks'));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'validated plan summary card displays profile and scenarios cleanly',
+    (tester) async {
+      await tester.pumpWidget(
+        host(
+          const AiRichPlanSummary(
+            profileLabel: 'KPN DEV',
+            workflowLabel: 'Login & Terminal',
+            scenarios: <AiScenarioRow>[AiScenarioRow(name: 'Valid Login Flow')],
+          ),
+        ),
+      );
 
-    expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsOneWidget);
-    expect(find.text('Parsing request…'), findsOneWidget);
-    expect(find.text('Matching target profile…'), findsOneWidget);
-    expect(find.text('Validating plan against guardrails…'), findsOneWidget);
-  });
+      expect(find.text('KPN DEV'), findsOneWidget);
+      expect(find.text('Login & Terminal'), findsOneWidget);
+      expect(find.text('Valid Login Flow'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'order report shows a separate result for every requested order',
@@ -125,17 +141,12 @@ void main() {
     );
 
     expect(find.text('Worked for 2s · 2 checks'), findsOneWidget);
-    expect(find.text('Reading QA request…'), findsNothing);
+    expect(find.text('Reading QA request…'), findsOneWidget);
+    expect(find.text('Matched Login & Terminal coverage.'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Worked for 2s · 2 checks')).dy,
       lessThan(tester.getTopLeft(find.text('Login flow')).dy),
     );
-
-    await tester.tap(find.text('Worked for 2s · 2 checks'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Reading QA request…'), findsOneWidget);
-    expect(find.text('Matched Login & Terminal coverage.'), findsOneWidget);
   });
 
   testWidgets('knowledge answer progressively reveals a safe flow chart', (

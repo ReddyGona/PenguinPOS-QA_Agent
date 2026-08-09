@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
-import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class QaSshTarget {
@@ -78,7 +78,7 @@ class QaTargetPreferencesRepository {
 
   Future<bool> loadAiModeEnabled() async {
     final preferences = await SharedPreferences.getInstance();
-    return preferences.getBool(_aiModeKey) ?? false;
+    return preferences.getBool(_aiModeKey) ?? true;
   }
 
   Future<void> saveAiModeEnabled(bool enabled) async {

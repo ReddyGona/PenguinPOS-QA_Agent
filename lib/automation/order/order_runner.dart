@@ -361,26 +361,69 @@ class PenguinPosOrderRunner {
           ),
         );
 
-        // Update Cart & Proceed to Payment
+        // State-driven Update Cart & Proceed to Payment
         final cartStart = DateTime.now();
-        bool isUpdateCart = await engine.hasKey(
-          PenguinPosOrderKeys.orderUpdateCart,
-          timeout: const Duration(seconds: 2),
-        );
+        final cartDeadline = cartStart.add(timeout);
+        const maxCartUpdates = 5;
+        const cartStateSettleDelay = Duration(milliseconds: 250);
+        bool isProceedToPayReady = false;
+        var updateCartTapCount = 0;
 
-        while (isUpdateCart) {
-          await engine.tap(PenguinPosOrderKeys.orderUpdateCart, delay: delay);
-          await Future<void>.delayed(const Duration(milliseconds: 600));
-          isUpdateCart = await engine.hasKey(
-            PenguinPosOrderKeys.orderUpdateCart,
-            timeout: const Duration(seconds: 1),
+        for (var attempt = 0; attempt < maxCartUpdates; attempt++) {
+          final remaining = cartDeadline.difference(DateTime.now());
+          if (remaining <= Duration.zero) break;
+
+          try {
+            final nextAction = await engine.waitForAnyKey(<String>[
+              PenguinPosOrderKeys.orderProceedToPay,
+              PenguinPosOrderKeys.orderUpdateCart,
+            ], timeout: remaining);
+
+            if (nextAction == PenguinPosOrderKeys.orderProceedToPay) {
+              isProceedToPayReady = true;
+              break;
+            }
+
+            if (nextAction == PenguinPosOrderKeys.orderUpdateCart) {
+              updateCartTapCount++;
+              _trace(
+                'Cart requires update (tap $updateCartTapCount of $maxCartUpdates); tapping Update Cart...',
+              );
+              await engine.tap(
+                PenguinPosOrderKeys.orderUpdateCart,
+                delay: delay,
+              );
+
+              final remainingAfterTap = cartDeadline.difference(DateTime.now());
+              if (remainingAfterTap > Duration.zero) {
+                await Future<void>.delayed(
+                  remainingAfterTap < cartStateSettleDelay
+                      ? remainingAfterTap
+                      : cartStateSettleDelay,
+                );
+              }
+            }
+          } on TimeoutException {
+            break;
+          }
+        }
+
+        if (!isProceedToPayReady) {
+          if (updateCartTapCount >= maxCartUpdates) {
+            throw StateError(
+              'Update Cart remained available after $maxCartUpdates taps; cart state did not transition to payment readiness. Check POS cart calculation contract.',
+            );
+          }
+          if (updateCartTapCount > 0) {
+            throw StateError(
+              'Update Cart was tapped $updateCartTapCount ${updateCartTapCount == 1 ? 'time' : 'times'}, but the cart did not transition to payment readiness before the deadline. Check POS cart calculation contract.',
+            );
+          }
+          throw StateError(
+            'SKU was submitted, but PenguinPOS did not expose Update Cart or Proceed to Pay before timeout. Check barcode acceptance, cart recalculation, and POS widget keys.',
           );
         }
 
-        await engine.waitFor(
-          PenguinPosOrderKeys.orderProceedToPay,
-          timeout: timeout,
-        );
         await engine.tap(PenguinPosOrderKeys.orderProceedToPay, delay: delay);
         emit(
           'Checkout Started',

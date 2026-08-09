@@ -5,9 +5,16 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/
 
 /// Read-only overview of a generated test plan and its scenarios.
 class AssistantPlanSummaryCard extends StatelessWidget {
-  const AssistantPlanSummaryCard({super.key, required this.summary});
+  const AssistantPlanSummaryCard({
+    super.key,
+    required this.summary,
+    this.onRunValidatedPlan,
+    this.onOpenInManualMode,
+  });
 
   final AiRichPlanSummary summary;
+  final VoidCallback? onRunValidatedPlan;
+  final VoidCallback? onOpenInManualMode;
 
   @override
   Widget build(BuildContext context) {

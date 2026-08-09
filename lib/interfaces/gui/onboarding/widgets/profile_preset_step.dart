@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 
 /// Step 2 Widget: Profile Preset Picker for Target Environment.
 class ProfilePresetStep extends StatelessWidget {

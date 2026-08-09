@@ -849,6 +849,7 @@ class AiChatMessage {
     this.richContent,
     this.activitySummary,
     this.pendingRequest,
+    this.executablePlan,
     DateTime? at,
   }) : at = at ?? DateTime.now();
 
@@ -867,4 +868,10 @@ class AiChatMessage {
 
   /// Structured pending context for multi-turn slot filling.
   final AiPendingRequest? pendingRequest;
+
+  /// The reviewed plan attached to this message. It is deliberately kept
+  /// separate from [richContent]: cards are presentation data, whereas this
+  /// remains the declarative input passed to an explicitly chosen run/edit
+  /// action.
+  final AiTestPlan? executablePlan;
 }
