@@ -717,6 +717,31 @@ class AiRichPlanSummary extends AiRichContent {
   final List<AiOrderItemRow> orderItems;
 }
 
+/// Final, read-only allocation shown in chat immediately before a validated
+/// plan is handed to the launcher. Unlike the planning table, this groups the
+/// exact items by order so operators can visually compare allocations.
+class AiRichLaunchPreview extends AiRichContent {
+  const AiRichLaunchPreview({
+    required this.profileLabel,
+    required this.workflowLabel,
+    required this.orders,
+  });
+
+  final String profileLabel;
+  final String workflowLabel;
+  final List<AiOrderLaunchPreview> orders;
+
+  int get totalItems =>
+      orders.fold<int>(0, (count, order) => count + order.items.length);
+}
+
+class AiOrderLaunchPreview {
+  const AiOrderLaunchPreview({required this.orderNumber, required this.items});
+
+  final int orderNumber;
+  final List<AiOrderItemRow> items;
+}
+
 class AiOrderItemRow {
   const AiOrderItemRow({
     required this.skuCode,

@@ -49,12 +49,19 @@ class AiOrchestrator {
     CancellationToken? cancelToken,
     AiModelEventCallback? onEvent,
   }) async {
+    final model = provider;
+
     // Informational questions are resolved before shortcut parsing so a
     // reference such as "Explain /login" cannot accidentally prepare a run.
-    final knowledgeResponse = _tryAnswerKnowledgeQuestion(input, history);
-    if (knowledgeResponse != null) {
-      _emitKnowledgeEvents(onEvent);
-      return knowledgeResponse;
+    // When a model is configured, free-form language is always interpreted by
+    // the model. The local knowledge and order parsers below are retained only
+    // as an offline compatibility path; they must not preempt the model.
+    if (model == null) {
+      final knowledgeResponse = _tryAnswerKnowledgeQuestion(input, history);
+      if (knowledgeResponse != null) {
+        _emitKnowledgeEvents(onEvent);
+        return knowledgeResponse;
+      }
     }
 
     AiPendingRequest? lastPendingRequest;
@@ -68,8 +75,10 @@ class AiOrchestrator {
 
     final effectivePending = pendingRequest ?? lastPendingRequest;
 
-    final continuedOrder = _continuePendingOrder(input, effectivePending);
-    if (continuedOrder != null) return continuedOrder;
+    if (model == null) {
+      final continuedOrder = _continuePendingOrder(input, effectivePending);
+      if (continuedOrder != null) return continuedOrder;
+    }
 
     final slashResponse = _slashCommandParser.parse(
       input,
@@ -81,22 +90,20 @@ class AiOrchestrator {
       return _validate(slashResponse, input: input, history: history);
     }
 
-    // Login is a fixed, safe workflow. Resolve common natural-language
-    // requests locally so a provider cannot turn a simple login request into
-    // malformed plan JSON (or an order-oriented clarification).
-    final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
-      input,
-      profiles,
-    );
-    if (naturalLoginResponse != null) {
-      return _validate(naturalLoginResponse, input: input, history: history);
-    }
-
-    final newOrderDraft = _startOrderDraft(input);
-    if (newOrderDraft != null) return newOrderDraft;
-
-    final model = provider;
     if (model == null) {
+      // Offline compatibility only. A configured model always receives
+      // free-form natural language before either deterministic parser runs.
+      final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
+        input,
+        profiles,
+      );
+      if (naturalLoginResponse != null) {
+        return _validate(naturalLoginResponse, input: input, history: history);
+      }
+
+      final newOrderDraft = _startOrderDraft(input);
+      if (newOrderDraft != null) return newOrderDraft;
+
       return const AiAssistantResponse(
         state: AiPlanState.needsInput,
         kind: AiAssistantResponseKind.clarification,
@@ -125,6 +132,12 @@ class AiOrchestrator {
       final trimmedHistory = history.length > 6
           ? history.sublist(history.length - 6)
           : history;
+      final modelMessages = <AiChatMessage>[
+        ...trimmedHistory,
+        // `history` represents earlier turns in the UI. The current request
+        // must be included explicitly or the model cannot plan from it.
+        AiChatMessage(role: AiChatRole.user, text: input),
+      ];
 
       // Phase 2: Matching profile
       onEvent?.call(
@@ -148,7 +161,7 @@ class AiOrchestrator {
 
       final raw = await model.completeJson(
         systemPrompt: systemPrompt,
-        messages: trimmedHistory,
+        messages: modelMessages,
         cancelToken: cancelToken,
         onEvent: onEvent,
       );
@@ -225,11 +238,84 @@ class AiOrchestrator {
     ).hasMatch(normalized)) {
       return null;
     }
-    final skuCodes = _skuCodesIn(input);
+
+    final ordersCount = _orderCountIn(input) ?? 1;
+    final profile = _resolveProfile(input) ?? activeProfile;
+
+    // Pre-pass: Check for explicit per-order item assignments (e.g., "order 1 gets sku 22, order 2 gets sku 11")
+    final explicitResult = _parseExplicitPerOrderItems(input, ordersCount);
+
+    if (explicitResult.hasConflictOrOutOfRange) {
+      return AiAssistantResponse(
+        state: AiPlanState.needsInput,
+        kind: AiAssistantResponseKind.clarification,
+        message:
+            explicitResult.validationErrorMessage ??
+            'Invalid order numbers specified in request.',
+        missingFields: const <String>['items'],
+      );
+    }
+
+    if (explicitResult.consumedOrderNumbers.isNotEmpty &&
+        explicitResult.consumedOrderNumbers.length == ordersCount &&
+        explicitResult.consumedOrderNumbers.containsAll(
+          List.generate(ordersCount, (i) => i + 1),
+        )) {
+      final targetProfile =
+          profile ?? (profiles.isNotEmpty ? profiles.first : null);
+      final plan = AiTestPlan(
+        workflow: AiWorkflow.orderCashPayment,
+        profileId: targetProfile?.id ?? 'kpn-dev',
+        ordersCount: ordersCount,
+        itemStrategy: AiItemStrategy.perOrder,
+        perIterationItems: explicitResult.perOrderItems,
+      );
+
+      final orderItemRows = <AiOrderItemRow>[
+        for (final entry in explicitResult.perOrderItems.entries)
+          for (final item in entry.value)
+            AiOrderItemRow(
+              skuCode: item.skuCode,
+              typeLabel: switch (item.type) {
+                SkuItemType.bizerba => 'Bizerba',
+                SkuItemType.weighed => 'Weighed',
+                SkuItemType.nonWeighed => 'Non-Weighed',
+              },
+              entryModeLabel: item.entryMode == ItemEntryMode.scan
+                  ? 'Scan (Barcode)'
+                  : 'Manual (Numpad)',
+              allocationLabel: 'Order ${entry.key}',
+            ),
+      ];
+
+      final richSummary = AiRichPlanSummary(
+        profileLabel: targetProfile?.label ?? 'Default Profile',
+        workflowLabel:
+            'Order & Cash Payment ($ordersCount ${ordersCount == 1 ? 'Order' : 'Orders'})',
+        scenarios: const <AiScenarioRow>[
+          AiScenarioRow(name: 'Start Sale & Customer Handling'),
+          AiScenarioRow(name: 'SKU & Item Entry'),
+          AiScenarioRow(name: 'Cash Payment & Round-Off'),
+        ],
+        orderItems: orderItemRows,
+      );
+
+      return _validate(
+        AiAssistantResponse(
+          state: AiPlanState.readyForConfirmation,
+          message: 'Order plan ready.',
+          plan: plan,
+          richContent: richSummary,
+        ),
+        input: input,
+        history: const <AiChatMessage>[],
+      );
+    }
+
+    // Residual text extraction for generic SKUs
+    final skuCodes = _skuCodesIn(explicitResult.residualText);
     if (skuCodes.isEmpty) return null;
 
-    final profile = _resolveProfile(input);
-    final ordersCount = _orderCountIn(input) ?? 1;
     final strategy =
         _itemStrategyIn(input) ??
         (skuCodes.length == 1 && ordersCount > 1
@@ -427,6 +513,99 @@ class AiOrchestrator {
         .toList(growable: false);
   }
 
+  _ExplicitPerOrderParsingResult _parseExplicitPerOrderItems(
+    String input,
+    int requestedOrderCount,
+  ) {
+    final pattern = RegExp(
+      r'\border\s*(\d+)\b'
+      r'(?:\s*(?:gets|has|with|contains|:))?'
+      r'(?:\s+(bizerba|bzerba|non[\s-]*weighed|weighed))?'
+      r'(?:\s*(?:sku|code|item|barcode|product)s?\b)?\s*[:.]?\s*'
+      r'([A-Za-z0-9][A-Za-z0-9._-]*)'
+      r'(?:\s+(scan|manual|numpad|barcode|mode))?',
+      caseSensitive: false,
+    );
+
+    final matches = pattern.allMatches(input).toList();
+    if (matches.isEmpty) {
+      return _ExplicitPerOrderParsingResult(
+        perOrderItems: const <int, List<OrderItem>>{},
+        consumedOrderNumbers: const <int>{},
+        residualText: input,
+        hasConflictOrOutOfRange: false,
+      );
+    }
+
+    final perOrderItems = <int, List<OrderItem>>{};
+    final consumedOrderNumbers = <int>{};
+    var residualText = input;
+    bool hasConflictOrOutOfRange = false;
+    String? validationErrorMessage;
+
+    for (final match in matches) {
+      final matchedText = match.group(0)!;
+      final orderNum = int.tryParse(match.group(1) ?? '');
+      final brandTypeToken = match.group(2)?.toLowerCase();
+      final skuCode = match.group(3)?.trim();
+      final entryModeToken = match.group(4)?.toLowerCase();
+
+      if (orderNum == null || skuCode == null || skuCode.isEmpty) continue;
+
+      if (orderNum < 1 || orderNum > requestedOrderCount) {
+        hasConflictOrOutOfRange = true;
+        validationErrorMessage =
+            'Order number $orderNum is out of range for a $requestedOrderCount-order request.';
+        continue;
+      }
+
+      final isBizerba =
+          brandTypeToken == 'bizerba' ||
+          brandTypeToken == 'bzerba' ||
+          RegExp(r'^[0-9]+W[0-9.]+$', caseSensitive: false).hasMatch(skuCode);
+
+      final SkuItemType itemType;
+      if (isBizerba) {
+        itemType = SkuItemType.bizerba;
+      } else if (brandTypeToken != null && brandTypeToken.contains('weighed')) {
+        itemType = brandTypeToken.contains('non')
+            ? SkuItemType.nonWeighed
+            : SkuItemType.weighed;
+      } else {
+        itemType = SkuItemType.nonWeighed;
+      }
+
+      final ItemEntryMode entryMode;
+      if (isBizerba) {
+        entryMode = ItemEntryMode.scan;
+      } else if (entryModeToken != null &&
+          (entryModeToken.contains('scan') ||
+              entryModeToken.contains('barcode'))) {
+        entryMode = ItemEntryMode.scan;
+      } else {
+        entryMode = ItemEntryMode.manual;
+      }
+
+      final item = OrderItem(
+        skuCode: skuCode,
+        type: itemType,
+        entryMode: entryMode,
+      );
+
+      perOrderItems.putIfAbsent(orderNum, () => <OrderItem>[]).add(item);
+      consumedOrderNumbers.add(orderNum);
+      residualText = residualText.replaceFirst(matchedText, ' ');
+    }
+
+    return _ExplicitPerOrderParsingResult(
+      perOrderItems: perOrderItems,
+      consumedOrderNumbers: consumedOrderNumbers,
+      residualText: residualText,
+      hasConflictOrOutOfRange: hasConflictOrOutOfRange,
+      validationErrorMessage: validationErrorMessage,
+    );
+  }
+
   bool _isBizerbaSku(String sku) =>
       RegExp(r'^[0-9]+W[0-9.]+$', caseSensitive: false).hasMatch(sku);
 
@@ -451,11 +630,16 @@ class AiOrchestrator {
   }
 
   List<String> _skuCodesIn(String input) {
+    final scrubbedInput = input.replaceAll(
+      RegExp(r'\border\s*\d+\b', caseSensitive: false),
+      ' ',
+    );
+
     final bizerbaMatches =
         RegExp(
           r'\b(?:bizerba|bzerba)\b(?:\s+(?:item|code|sku))?\s*[:.]?\s*([0-9A-Za-z.]+)',
           caseSensitive: false,
-        ).allMatches(input).map((m) => m.group(1)!).where((token) {
+        ).allMatches(scrubbedInput).map((m) => m.group(1)!).where((token) {
           final lower = token.toLowerCase();
           const keywords = <String>{
             'sku',
@@ -476,7 +660,7 @@ class AiOrchestrator {
     final matches = RegExp(
       r'\b(?:skus?|items?|products?|barcodes?)\s*(?:are|:)?\s*([0-9A-Za-z][0-9A-Za-z,\s.]*?)(?=\s+(?:in|for|with|use|via|using|back|same|all|the|and)\b|\s*$)',
       caseSensitive: false,
-    ).allMatches(input);
+    ).allMatches(scrubbedInput);
 
     final multiplierMatch = RegExp(
       r'\b(?:repeat\s+)?(\d+)\s*(?:times|x|iterations?|reps?)\b',
@@ -708,6 +892,19 @@ class AiOrchestrator {
           plan: canonicalPlan,
           message:
               'Please provide an item list for each order before I run the plan.',
+          missingFields: const <String>['items'],
+        );
+      }
+      if (canonicalPlan.itemStrategy == AiItemStrategy.perOrder &&
+          (canonicalPlan.perIterationItems.keys.any(
+                (order) => order < 1 || order > canonicalPlan.ordersCount,
+              ) ||
+              canonicalPlan.items.isNotEmpty)) {
+        return AiAssistantResponse(
+          state: AiPlanState.needsInput,
+          plan: canonicalPlan,
+          message:
+              'Each per-order item list must belong to exactly one requested order; shared items are not allowed in a per-order plan.',
           missingFields: const <String>['items'],
         );
       }
@@ -1297,4 +1494,20 @@ Multiple orders with multiple items (e.g. order 1 has sku 22 & 11; order 2 has b
 The JSON examples are schema examples only. Never infer or select SKU 22 (or any other SKU), an item type, a weight, or an entry mode from them. If a user requests an order without item details, return state `needsInput` and clearly say which details are missing. Only reuse prior item details when the user explicitly says to repeat, reuse, or use the previous order. For login, request secure credentials if the user has not indicated they are configured. For orders, ask whether SKUs are shared or per order and collect valid items. Never mark a plan ready unless profile, workflow, and required order items are supplied.
 ''';
   }
+}
+
+class _ExplicitPerOrderParsingResult {
+  const _ExplicitPerOrderParsingResult({
+    required this.perOrderItems,
+    required this.consumedOrderNumbers,
+    required this.residualText,
+    required this.hasConflictOrOutOfRange,
+    this.validationErrorMessage,
+  });
+
+  final Map<int, List<OrderItem>> perOrderItems;
+  final Set<int> consumedOrderNumbers;
+  final String residualText;
+  final bool hasConflictOrOutOfRange;
+  final String? validationErrorMessage;
 }

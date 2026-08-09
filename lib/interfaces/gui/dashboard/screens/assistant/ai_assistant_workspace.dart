@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_composer.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_log_drawer.dart';
@@ -219,11 +220,15 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
           text: hasValidatedPlan
               ? '${response.message}\n\nPlan validated for ${plan!.profileId}. Executing test plan automatically…'
               : response.message,
-          richContent:
-              response.richContent ??
-              (response.knowledge == null
-                  ? null
-                  : AiRichKnowledgeAnswer(answer: response.knowledge!)),
+          // A validated plan gets a launch-specific preview even when the
+          // model did not provide a presentation card. This is read-only and
+          // does not change the existing automatic launch behavior.
+          richContent: hasValidatedPlan && plan != null
+              ? _launchPreviewFor(plan)
+              : response.richContent ??
+                    (response.knowledge == null
+                        ? null
+                        : AiRichKnowledgeAnswer(answer: response.knowledge!)),
           activitySummary: activitySummary,
           pendingRequest: response.pendingRequest,
           executablePlan: hasValidatedPlan ? plan : null,
@@ -255,6 +260,42 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
       }
       widget.onPlanningStateChanged?.call(false);
     }
+  }
+
+  AiRichLaunchPreview _launchPreviewFor(AiTestPlan plan) {
+    List<AiOrderItemRow> rowsFor(Iterable<OrderItem> items, int order) => items
+        .map(
+          (item) => AiOrderItemRow(
+            skuCode: item.skuCode,
+            typeLabel: switch (item.type.name) {
+              'bizerba' => 'Bizerba',
+              'weighed' => 'Weighed',
+              _ => 'Non-Weighed',
+            },
+            entryModeLabel: item.entryMode.name == 'scan'
+                ? 'Scan (Barcode)'
+                : 'Manual (Numpad)',
+            allocationLabel: 'Order $order',
+          ),
+        )
+        .toList(growable: false);
+
+    return AiRichLaunchPreview(
+      profileLabel: plan.profileId,
+      workflowLabel: plan.isOrder ? 'Order & Cash Payment' : 'Login',
+      orders: <AiOrderLaunchPreview>[
+        for (var order = 1; order <= plan.ordersCount; order++)
+          AiOrderLaunchPreview(
+            orderNumber: order,
+            items: plan.itemStrategy == AiItemStrategy.perOrder
+                ? rowsFor(
+                    plan.perIterationItems[order] ?? const <OrderItem>[],
+                    order,
+                  )
+                : rowsFor(plan.items, order),
+          ),
+      ],
+    );
   }
 
   void _onModelEvent(AiModelEvent event) {

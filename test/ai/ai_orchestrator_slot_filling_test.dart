@@ -209,4 +209,72 @@ void main() {
       expect(response.plan!.items.first.entryMode, ItemEntryMode.manual);
     },
   );
+
+  test(
+    'parses explicit per-order clauses with mixed SKUs and entry modes and auto-executes',
+    () async {
+      const kpnDev = QaProfile(
+        id: 'kpn-dev',
+        label: 'KPN DEV',
+        entity: 'kpn',
+        environment: 'dev',
+      );
+      final orchestrator = AiOrchestrator(
+        profiles: QaProfile.values,
+        activeProfile: kpnDev,
+        provider: null,
+      );
+      final response = await orchestrator.respond(
+        input:
+            'punch 3 orders in kpn dev: order 1 gets sku 22 manual mode, order 2 gets sku 11 manual mode, order 3 gets bizerba sku 10000001W3.337 scan mode',
+        history: const <AiChatMessage>[],
+      );
+
+      expect(response.canExecute, isTrue);
+      expect(response.plan, isNotNull);
+      expect(response.plan!.ordersCount, 3);
+      expect(response.plan!.profileId, 'kpn-dev');
+      expect(response.plan!.itemStrategy, AiItemStrategy.perOrder);
+
+      // Verify sequence digits '1', '2', '3' are NOT present as SKU codes
+      final allSkus = response.plan!.perIterationItems.values
+          .expand((items) => items)
+          .map((i) => i.skuCode)
+          .toList();
+      expect(allSkus, isNot(contains('1')));
+      expect(allSkus, isNot(contains('2')));
+      expect(allSkus, isNot(contains('3')));
+
+      // Verify exact per-order SKU, type, and entryMode mappings
+      final order1 = response.plan!.perIterationItems[1]!;
+      expect(order1.first.skuCode, '22');
+      expect(order1.first.type, SkuItemType.nonWeighed);
+      expect(order1.first.entryMode, ItemEntryMode.manual);
+
+      final order2 = response.plan!.perIterationItems[2]!;
+      expect(order2.first.skuCode, '11');
+      expect(order2.first.type, SkuItemType.nonWeighed);
+      expect(order2.first.entryMode, ItemEntryMode.manual);
+
+      final order3 = response.plan!.perIterationItems[3]!;
+      expect(order3.first.skuCode, '10000001W3.337');
+      expect(order3.first.type, SkuItemType.bizerba);
+      expect(order3.first.entryMode, ItemEntryMode.scan);
+    },
+  );
+
+  test(
+    'returns clarification when out-of-range order sequence number is specified',
+    () async {
+      final orchestrator = buildOrchestrator();
+      final response = await orchestrator.respond(
+        input:
+            'punch 3 orders in kpn dev: order 1 gets sku 22, order 4 gets sku 11',
+        history: const <AiChatMessage>[],
+      );
+
+      expect(response.canExecute, isFalse);
+      expect(response.message, contains('out of range'));
+    },
+  );
 }

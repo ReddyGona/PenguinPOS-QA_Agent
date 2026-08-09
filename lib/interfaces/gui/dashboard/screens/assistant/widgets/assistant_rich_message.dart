@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_knowledge_answer_card.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_launch_preview_card.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_order_report_card.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_plan_summary_card.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_planning_summary_card.dart';
@@ -33,6 +34,9 @@ class AssistantRichMessage extends StatelessWidget {
         summary: summary,
         onRunValidatedPlan: onRunValidatedPlan,
         onOpenInManualMode: onOpenInManualMode,
+      ),
+      AiRichLaunchPreview preview => AssistantLaunchPreviewCard(
+        preview: preview,
       ),
       AiRichTestReport report => AssistantTestReportCard(report: report),
       AiRichOrderReport report => AssistantOrderReportCard(report: report),

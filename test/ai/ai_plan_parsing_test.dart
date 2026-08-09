@@ -27,7 +27,128 @@ class _FixedModelProvider implements AiModelProvider {
   Future<List<String>> listModels() async => const <String>[];
 }
 
+class _RecordingModelProvider implements AiModelProvider {
+  _RecordingModelProvider(this.response);
+
+  final String response;
+  List<AiChatMessage> receivedMessages = const <AiChatMessage>[];
+
+  @override
+  Future<String> completeJson({
+    required String systemPrompt,
+    required List<AiChatMessage> messages,
+    CancellationToken? cancelToken,
+    AiModelEventCallback? onEvent,
+  }) async {
+    receivedMessages = messages;
+    return response;
+  }
+
+  @override
+  Future<List<String>> listModels() async => const <String>[];
+}
+
 void main() {
+  test(
+    'routes a free-form per-order request through the configured model and validates its allocation',
+    () async {
+      final provider = _RecordingModelProvider(
+        jsonEncode(<String, Object?>{
+          'message': 'Plan ready.',
+          'state': 'readyForConfirmation',
+          'plan': <String, Object?>{
+            'workflow': 'orderCashPayment',
+            'profileId': 'kpn-dev',
+            'ordersCount': 3,
+            'itemStrategy': 'perOrder',
+            'items': const <Object?>[],
+            'perIterationItems': <String, Object?>{
+              '1': <Object?>[
+                <String, Object?>{
+                  'skuCode': '22',
+                  'type': 'nonWeighed',
+                  'entryMode': 'manual',
+                },
+              ],
+              '2': <Object?>[
+                <String, Object?>{
+                  'skuCode': '11',
+                  'type': 'nonWeighed',
+                  'entryMode': 'manual',
+                },
+              ],
+              '3': <Object?>[
+                <String, Object?>{
+                  'skuCode': '10000003.739',
+                  'type': 'bizerba',
+                  'entryMode': 'scan',
+                },
+              ],
+            },
+          },
+        }),
+      );
+      const input =
+          'punch 3 orders in kpn dev, each order has custom skus no shared: order 1, sku 22; order 2, sku 11; order 3, sku 10000003.739 bizerba code';
+
+      final response = await AiOrchestrator(
+        profiles: QaProfile.values,
+        provider: provider,
+      ).respond(input: input, history: const <AiChatMessage>[]);
+
+      expect(provider.receivedMessages.last.text, input);
+      expect(response.canExecute, isTrue);
+      expect(response.plan!.itemStrategy, AiItemStrategy.perOrder);
+      expect(response.plan!.perIterationItems[1]!.single.skuCode, '22');
+      expect(response.plan!.perIterationItems[2]!.single.skuCode, '11');
+      expect(
+        response.plan!.perIterationItems[3]!.single.skuCode,
+        '10000003.739',
+      );
+    },
+  );
+
+  test(
+    'blocks model plans with an out-of-range per-order allocation',
+    () async {
+      final response =
+          await AiOrchestrator(
+            profiles: QaProfile.values,
+            provider: _FixedModelProvider(
+              jsonEncode(<String, Object?>{
+                'message': 'Plan ready.',
+                'state': 'readyForConfirmation',
+                'plan': <String, Object?>{
+                  'workflow': 'orderCashPayment',
+                  'profileId': 'kpn-dev',
+                  'ordersCount': 2,
+                  'itemStrategy': 'perOrder',
+                  'items': const <Object?>[],
+                  'perIterationItems': <String, Object?>{
+                    '1': <Object?>[
+                      <String, Object?>{'skuCode': '22', 'type': 'nonWeighed'},
+                    ],
+                    '2': <Object?>[
+                      <String, Object?>{'skuCode': '11', 'type': 'nonWeighed'},
+                    ],
+                    '3': <Object?>[
+                      <String, Object?>{'skuCode': '44', 'type': 'nonWeighed'},
+                    ],
+                  },
+                },
+              }),
+            ),
+          ).respond(
+            input: 'make two separate orders with SKU 22 and SKU 11',
+            history: const <AiChatMessage>[],
+          );
+
+      expect(response.canExecute, isFalse);
+      expect(response.state, AiPlanState.needsInput);
+      expect(response.message, contains('exactly one requested order'));
+    },
+  );
+
   test(
     'normalizes an array-based per-order plan without a type cast crash',
     () {
@@ -230,7 +351,9 @@ void main() {
     final plan = AiTestPlan(
       workflow: AiWorkflow.orderCashPayment,
       profileId: 'kpn-stage',
-      items: const <OrderItem>[OrderItem(skuCode: '22')],
+      items: const <OrderItem>[
+        OrderItem(skuCode: '22', entryMode: ItemEntryMode.manual),
+      ],
     );
     final messages = <AiChatMessage>[];
     await tester.pumpWidget(
@@ -297,5 +420,9 @@ void main() {
     expect(runs, 1);
     expect(find.textContaining('2 checks'), findsOneWidget);
     expect(find.text('Matching target profile…'), findsOneWidget);
+    expect(find.text('Final order allocation'), findsOneWidget);
+    expect(find.text('Order 1'), findsOneWidget);
+    expect(find.text('1 item'), findsOneWidget);
+    expect(find.text('SKU 22 · Non-Weighed · Manual (Numpad)'), findsOneWidget);
   });
 }
