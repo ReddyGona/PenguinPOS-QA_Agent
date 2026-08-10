@@ -5,7 +5,7 @@ enum SpeedPreset {
   slow,
   custom;
 
-  /// Parses a string representation ('fast', 'medium', 'slow', 'custom') into a [SpeedPreset].
+  /// Parses a string representation ('fast', 'medium', 'slow', 'custom', '0.5x', '1x', '2x', 'turbo') into a [SpeedPreset].
   static SpeedPreset parse(String? raw) {
     if (raw == null) return SpeedPreset.fast;
     final normalized = raw.trim().toLowerCase();
@@ -13,6 +13,9 @@ enum SpeedPreset {
       'slow' => SpeedPreset.slow,
       'medium' => SpeedPreset.medium,
       'fast' => SpeedPreset.fast,
+      '0.5x' || 'half' => SpeedPreset.custom,
+      '1x' => SpeedPreset.fast,
+      '2x' || 'turbo' => SpeedPreset.custom,
       'custom' => SpeedPreset.custom,
       _ => SpeedPreset.fast,
     };
@@ -26,6 +29,23 @@ class ExecutionSpeed {
   final SpeedPreset preset;
   final Duration? customDelay;
 
+  // Predefined static instances
+  static const oneX = ExecutionSpeed(preset: SpeedPreset.fast);
+  static const halfX = ExecutionSpeed(
+    preset: SpeedPreset.custom,
+    customDelay: Duration(milliseconds: 200),
+  );
+  static const twoX = ExecutionSpeed(
+    preset: SpeedPreset.custom,
+    customDelay: Duration(milliseconds: 50),
+  );
+  static const turbo = ExecutionSpeed(
+    preset: SpeedPreset.custom,
+    customDelay: Duration.zero,
+  );
+  static const medium = ExecutionSpeed(preset: SpeedPreset.medium);
+  static const slow = ExecutionSpeed(preset: SpeedPreset.slow);
+
   /// Returns the actual duration to delay between driver actions.
   Duration get delay {
     if (customDelay != null) return customDelay!;
@@ -37,6 +57,28 @@ class ExecutionSpeed {
     };
   }
 
-  /// Human-readable label for the speed mode.
+  /// Human-readable API name for the speed mode (e.g. 'fast', 'medium', 'slow', 'custom').
   String get name => preset.name;
+
+  /// Display alias label for GUI speed controls (e.g. '0.5x', '1x', '2x', 'Turbo').
+  String get displayLabel {
+    if (customDelay == const Duration(milliseconds: 200)) return '0.5x';
+    if (customDelay == const Duration(milliseconds: 50)) return '2x';
+    if (customDelay == Duration.zero) return 'Turbo';
+    if (preset == SpeedPreset.fast && customDelay == null) return '1x';
+    if (preset == SpeedPreset.medium) return 'Medium (1s)';
+    if (preset == SpeedPreset.slow) return 'Slow (2.5s)';
+    return preset.name;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ExecutionSpeed &&
+          runtimeType == other.runtimeType &&
+          preset == other.preset &&
+          customDelay == other.customDelay;
+
+  @override
+  int get hashCode => preset.hashCode ^ customDelay.hashCode;
 }

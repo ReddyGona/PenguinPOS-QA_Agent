@@ -1,0 +1,42 @@
+/// Encapsulates generic execution results for an automation block pipeline run.
+class PipelineRunResult {
+  const PipelineRunResult({
+    required this.passed,
+    required this.startedAt,
+    required this.finishedAt,
+    this.speed = 'fast',
+    this.scenariosExecuted = const <String>[],
+    this.vmServiceUri,
+    this.error,
+    this.cleanupPassed,
+    this.cleanupDetail,
+    this.wasAppClosedByUser = false,
+  });
+
+  final bool passed;
+  final DateTime startedAt;
+  final DateTime finishedAt;
+  final String speed;
+  final List<String> scenariosExecuted;
+  final Uri? vmServiceUri;
+  final String? error;
+
+  /// Post-pipeline session cleanup is tracked independently so scenario results
+  /// remain truthful even when the test environment could not be reset.
+  final bool? cleanupPassed;
+  final String? cleanupDetail;
+  final bool wasAppClosedByUser;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'passed': passed,
+    'speed': speed,
+    'scenariosExecuted': scenariosExecuted,
+    'wasAppClosedByUser': wasAppClosedByUser,
+    'startedAt': startedAt.toUtc().toIso8601String(),
+    'finishedAt': finishedAt.toUtc().toIso8601String(),
+    if (vmServiceUri != null) 'vmServiceUri': vmServiceUri.toString(),
+    if (error != null) 'error': error,
+    if (cleanupPassed != null) 'cleanupPassed': cleanupPassed,
+    if (cleanupDetail != null) 'cleanupDetail': cleanupDetail,
+  };
+}

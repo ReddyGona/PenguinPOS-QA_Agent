@@ -50,6 +50,72 @@ class _RecordingModelProvider implements AiModelProvider {
 
 void main() {
   test(
+    'preserves a raw Bizerba barcode when a configured model asks for details',
+    () async {
+      final response =
+          await AiOrchestrator(
+            profiles: QaProfile.values,
+            provider: _FixedModelProvider(
+              jsonEncode(<String, Object?>{
+                'message': 'Please specify the item type and weight.',
+                'state': 'needsInput',
+                'kind': 'clarification',
+                'missingFields': <String>['itemType', 'weight'],
+              }),
+            ),
+          ).respond(
+            input: 'punch one order in kpn dev with sku 10000001W3.709',
+            history: const <AiChatMessage>[],
+          );
+
+      expect(response.canExecute, isTrue);
+      expect(response.plan!.profileId, 'kpn-dev');
+      final item = response.plan!.items.single;
+      expect(item.skuCode, '10000001W3.709');
+      expect(item.type, SkuItemType.bizerba);
+      expect(item.entryMode, ItemEntryMode.scan);
+      expect(item.weight, isNull);
+    },
+  );
+
+  test(
+    'rejects a configured model plan that truncates a raw Bizerba barcode',
+    () async {
+      final response =
+          await AiOrchestrator(
+            profiles: QaProfile.values,
+            provider: _FixedModelProvider(
+              jsonEncode(<String, Object?>{
+                'message': 'Plan ready.',
+                'state': 'readyForConfirmation',
+                'plan': <String, Object?>{
+                  'workflow': 'orderCashPayment',
+                  'profileId': 'kpn-dev',
+                  'ordersCount': 1,
+                  'itemStrategy': 'sameForAll',
+                  'items': <Object?>[
+                    <String, Object?>{
+                      'skuCode': '10000001',
+                      'type': 'bizerba',
+                      'entryMode': 'scan',
+                    },
+                  ],
+                },
+              }),
+            ),
+          ).respond(
+            input: 'punch one order in kpn dev with sku 10000001W3.709',
+            history: const <AiChatMessage>[],
+          );
+
+      expect(response.canExecute, isTrue);
+      expect(response.plan!.items.single.skuCode, '10000001W3.709');
+      expect(response.plan!.items.single.type, SkuItemType.bizerba);
+      expect(response.plan!.items.single.entryMode, ItemEntryMode.scan);
+    },
+  );
+
+  test(
     'routes a free-form per-order request through the configured model and validates its allocation',
     () async {
       final provider = _RecordingModelProvider(
@@ -189,8 +255,8 @@ void main() {
       expect(response.plan!.itemStrategy, AiItemStrategy.perOrder);
       expect(response.plan!.perIterationItems[1]!.single.skuCode, '22');
       expect(
-        response.plan!.perIterationItems[1]!.single.entryMode.name,
-        'manual',
+        response.plan!.perIterationItems[1]!.single.effectiveEntryMode.name,
+        'manualNumpad',
       );
       expect(response.plan!.perIterationItems[2]!.single.weight, 1.763);
     },
@@ -352,7 +418,7 @@ void main() {
       workflow: AiWorkflow.orderCashPayment,
       profileId: 'kpn-stage',
       items: const <OrderItem>[
-        OrderItem(skuCode: '22', entryMode: ItemEntryMode.manual),
+        OrderItem(skuCode: '22', entryMode: ItemEntryMode.manualNumpad),
       ],
     );
     final messages = <AiChatMessage>[];

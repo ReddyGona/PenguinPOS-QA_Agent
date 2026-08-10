@@ -161,6 +161,42 @@ void main() {
     );
 
     test(
+      'scan-mode Bizerba uses automatic text entry and the order submit control',
+      () async {
+        final tapped = <String>[];
+        final keys = baseOrderKeys()
+          ..add(PenguinPosOrderKeys.orderProceedToPay);
+        final engine = StatefulFakeDriverEngine(
+          initialKeys: keys,
+          tappedKeys: tapped,
+        );
+        const bizerbaScenario = OrderScenario(
+          id: 'bizerba_scan_transport',
+          name: 'Bizerba Scan Transport',
+          items: <OrderItem>[
+            OrderItem(skuCode: '10000001W3.709', type: SkuItemType.bizerba),
+          ],
+        );
+
+        final result = await PenguinPosOrderRunner().run(
+          bizerbaScenario,
+          vmServiceUri: Uri.parse('http://127.0.0.1:8080'),
+          driverEngine: engine,
+          timeout: const Duration(seconds: 5),
+        );
+
+        expect(result.passed, isTrue);
+        expect(
+          tapped,
+          contains(
+            'enterText:${PenguinPosOrderKeys.orderInputCode}:10000001W3.709',
+          ),
+        );
+        expect(tapped, contains(PenguinPosOrderKeys.orderNumPadEnter));
+      },
+    );
+
+    test(
       '2. Statefully transitions from Update Cart to Proceed to Pay',
       () async {
         final tapped = <String>[];
