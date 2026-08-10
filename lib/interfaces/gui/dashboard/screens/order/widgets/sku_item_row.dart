@@ -25,7 +25,7 @@ class SkuItemRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isManual = item.entryMode == ItemEntryMode.manual;
+    final isManual = item.effectiveEntryMode != ItemEntryMode.scan;
     final isBizerba = item.type == SkuItemType.bizerba;
     final isWeighed = item.isWeighed;
 
@@ -113,24 +113,32 @@ class SkuItemRow extends StatelessWidget {
           ),
           const SizedBox(width: 10),
 
-          // 3. Dropdown 1: Entry Mode (Scan vs Manual Entry)
+          // 3. Dropdown 1: Entry Mode (Scan vs Manual Numpad vs Manual QWERTY)
           SizedBox(
-            width: 145,
+            width: 155,
             child: DropdownButtonFormField<ItemEntryMode>(
               key: ValueKey<String>(
-                'entry-${item.rowId}-${item.entryMode.name}',
+                'entry-${item.rowId}-${item.effectiveEntryMode.name}',
               ),
-              initialValue: item.entryMode,
+              initialValue: item.effectiveEntryMode,
               icon: const Icon(
                 Icons.keyboard_arrow_down_rounded,
                 size: 20,
                 color: Color(0xFF64748B),
               ),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Entry Mode',
                 isDense: true,
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
+                border: const OutlineInputBorder(),
+                filled:
+                    (isBizerba ||
+                    RegExp(r'^\d{1,3}$').hasMatch(item.skuCode.trim())),
+                fillColor:
+                    (isBizerba ||
+                        RegExp(r'^\d{1,3}$').hasMatch(item.skuCode.trim()))
+                    ? const Color(0xFFF1F5F9)
+                    : null,
+                contentPadding: const EdgeInsets.symmetric(
                   horizontal: 10,
                   vertical: 10,
                 ),
@@ -145,7 +153,10 @@ class SkuItemRow extends StatelessWidget {
                   ),
                 );
               }).toList(),
-              onChanged: running
+              onChanged:
+                  (running ||
+                      isBizerba ||
+                      RegExp(r'^\d{1,3}$').hasMatch(item.skuCode.trim()))
                   ? null
                   : (newMode) {
                       if (newMode != null) {

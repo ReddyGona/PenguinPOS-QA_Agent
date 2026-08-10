@@ -25,7 +25,8 @@ enum SkuItemType {
 
 enum ItemEntryMode {
   scan('Scan (Default)'),
-  manual('Manual Entry');
+  manualNumpad('Manual Numpad'),
+  manualQwerty('Manual QWERTY');
 
   const ItemEntryMode(this.label);
   final String label;
@@ -35,11 +36,15 @@ enum ItemEntryMode {
       RegExp(r'[^a-z]'),
       '',
     );
+    if (normalized == 'manualqwerty' || normalized == 'qwerty') {
+      return ItemEntryMode.manualQwerty;
+    }
     if (normalized == 'manual' ||
         normalized == 'manualnumpad' ||
-        normalized == 'manualtext' ||
-        normalized == 'manualentry') {
-      return ItemEntryMode.manual;
+        normalized == 'numpad' ||
+        normalized == 'manualentry' ||
+        normalized == 'manualtext') {
+      return ItemEntryMode.manualNumpad;
     }
     return ItemEntryMode.scan;
   }
@@ -61,20 +66,25 @@ enum InputSourceMode {
 }
 
 enum UiCustomMode {
-  common('Common Payload (Same for All)'),
-  perIteration('Custom Payload per Iteration');
+  common('Same Items for All Orders'),
+  perIteration('Custom Items Per Order');
 
   const UiCustomMode(this.label);
   final String label;
 
   static UiCustomMode fromString(String? val) {
-    if (val == 'perIteration') return UiCustomMode.perIteration;
+    if (val == 'perIteration' || val == 'perOrder') {
+      return UiCustomMode.perIteration;
+    }
     return UiCustomMode.common;
   }
 }
 
 /// Single SKU item entry for an order automation test scenario.
 class OrderItem {
+  static final RegExp _numericBizerbaPattern = RegExp(r'^\d{8}\.\d{3}$');
+  static final RegExp _shortCodePattern = RegExp(r'^\d{1,3}$');
+
   const OrderItem({
     required this.skuCode,
     this.type = SkuItemType.nonWeighed,
@@ -95,9 +105,12 @@ class OrderItem {
     ItemEntryMode entryMode = ItemEntryMode.scan,
   }) {
     _rowSequence++;
+    final cleanCode = skuCode.trim();
+    final resolvedType = _resolveType(cleanCode, type);
+
     return OrderItem(
       skuCode: skuCode,
-      type: type,
+      type: resolvedType,
       weight: weight,
       entryMode: entryMode,
       rowId: 'sku-${DateTime.now().microsecondsSinceEpoch}-$_rowSequence',
@@ -110,14 +123,51 @@ class OrderItem {
   final ItemEntryMode entryMode;
   final String rowId;
 
-  bool get isWeighed => type == SkuItemType.weighed;
-  bool get isBizerba => type == SkuItemType.bizerba;
+  /// The type after applying the barcode contract.
+  ///
+  /// A Bizerba-formatted code is authoritative even if an imported payload
+  /// incorrectly labels it `nonWeighed` or `weighed`.
+  SkuItemType get effectiveType => _resolveType(skuCode.trim(), type);
+
+  bool get isWeighed => effectiveType == SkuItemType.weighed;
+  bool get isBizerba => effectiveType == SkuItemType.bizerba;
+
+  static bool isBizerbaCode(String code) {
+    final cleanCode = code.trim();
+    return cleanCode.toUpperCase().contains('W') ||
+        _numericBizerbaPattern.hasMatch(cleanCode);
+  }
+
+  static bool isShortCode(String code) =>
+      _shortCodePattern.hasMatch(code.trim());
+
+  static SkuItemType _resolveType(String cleanCode, SkuItemType requestedType) {
+    return isBizerbaCode(cleanCode) ? SkuItemType.bizerba : requestedType;
+  }
+
+  /// Returns the effective entry mode according to strict precedence rules:
+  /// 1. Bizerba (explicit SkuItemType.bizerba or W-format / ^\d{8}\.\d{3}$) -> forced ItemEntryMode.scan.
+  /// 2. Short code (1 to 3 numeric digits) -> forced ItemEntryMode.manualNumpad.
+  /// 3. Everything else (standard SKU / offer ID) -> requested entryMode (defaults to scan).
+  ItemEntryMode get effectiveEntryMode {
+    final cleanCode = skuCode.trim();
+
+    if (isBizerba) {
+      return ItemEntryMode.scan;
+    }
+
+    if (isShortCode(cleanCode)) {
+      return ItemEntryMode.manualNumpad;
+    }
+
+    return entryMode;
+  }
 
   Map<String, Object?> toJson() => <String, Object?>{
     'skuCode': skuCode,
     if (rowId.isNotEmpty) 'rowId': rowId,
-    'type': type.name,
-    'entryMode': entryMode.name,
+    'type': effectiveType.name,
+    'entryMode': effectiveEntryMode.name,
     'isWeighed': isWeighed,
     if (weight != null) 'weight': weight,
   };
@@ -127,18 +177,23 @@ class OrderItem {
     final entryModeStr = json['entryMode'] as String?;
     final isWeighedOld = (json['isWeighed'] as bool?) ?? false;
     final isBizerbaOld = (json['isBizerba'] as bool?) ?? false;
+    final rawSkuCode = (json['skuCode'] as String?) ?? '';
+    final cleanCode = rawSkuCode.trim();
 
-    final resolvedType = typeStr != null
+    final requestedType = typeStr != null
         ? SkuItemType.fromString(typeStr)
         : (isBizerbaOld
               ? SkuItemType.bizerba
               : (isWeighedOld ? SkuItemType.weighed : SkuItemType.nonWeighed));
+    final resolvedType = _resolveType(cleanCode, requestedType);
+
+    final parsedMode = ItemEntryMode.fromString(entryModeStr);
 
     return OrderItem(
-      skuCode: (json['skuCode'] as String?) ?? '',
+      skuCode: rawSkuCode,
       type: resolvedType,
       weight: (json['weight'] as num?)?.toDouble(),
-      entryMode: ItemEntryMode.fromString(entryModeStr),
+      entryMode: parsedMode,
       rowId: (json['rowId'] as String?) ?? OrderItem.draft().rowId,
     );
   }
@@ -152,14 +207,18 @@ class OrderItem {
     ItemEntryMode? entryMode,
     String? rowId,
   }) {
-    final newType = type ?? this.type;
-    final double? resolvedWeight = newType == SkuItemType.weighed
+    final newSkuCode = skuCode ?? this.skuCode;
+    final cleanCode = newSkuCode.trim();
+    final explicitType = type ?? this.type;
+    final resolvedType = _resolveType(cleanCode, explicitType);
+
+    final double? resolvedWeight = resolvedType == SkuItemType.weighed
         ? (identical(weight, _weightSentinel) ? this.weight : weight as double?)
         : null;
 
     return OrderItem(
-      skuCode: skuCode ?? this.skuCode,
-      type: newType,
+      skuCode: newSkuCode,
+      type: resolvedType,
       weight: resolvedWeight,
       entryMode: entryMode ?? this.entryMode,
       rowId: rowId ?? this.rowId,

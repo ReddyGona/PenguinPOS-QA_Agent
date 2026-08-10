@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
+import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
+import 'package:penguin_pos_qa_agent/automation/login/blocks/authentication_pipeline_factory.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
+import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
 import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
@@ -178,23 +182,30 @@ class PenguinPosOrderRunner {
           );
         }
 
-        await engine.enterText(
-          PenguinPosLoginKeys.loginId,
-          loginId,
-          delay: delay,
+        final loginScenario = LoginScenario(
+          id: 'order_prereq_login',
+          name: 'Order Prerequisite Login',
+          loginId: loginId,
+          password: password,
         );
-        await engine.enterText(
-          PenguinPosLoginKeys.password,
-          password,
-          delay: delay,
-        );
-        await engine.tap(PenguinPosLoginKeys.submit, delay: delay);
 
-        await engine.waitFor(
-          PenguinPosLoginKeys.terminalContinue,
+        final execContext = ExecutionContext(
+          driver: engine,
+          speed: speed,
           timeout: timeout,
+          onEvent: onExecutionEvent,
         );
-        await engine.tap(PenguinPosLoginKeys.terminalContinue, delay: delay);
+
+        final setupBlocks =
+            await AuthenticationPipelineFactory.createSetupPipeline(
+              execContext,
+              loginScenario,
+            );
+
+        for (final block in setupBlocks) {
+          await block.execute(execContext);
+        }
+
         emit(
           'Login Completed',
           'Logged in and continued through terminal selection.',
@@ -281,15 +292,17 @@ class PenguinPosOrderRunner {
         for (final item in itemsToPunch) {
           if (item.skuCode.trim().isEmpty) continue;
 
+          final effectiveType = item.effectiveType;
+          final effectiveMode = item.effectiveEntryMode;
           _trace(
-            'Entering item [${item.type.label}] via [${item.entryMode.label}]: "${item.skuCode}"...',
+            'Entering item [${effectiveType.label}] via [${effectiveMode.label}]: "${item.skuCode}"...',
           );
 
-          if (item.entryMode == ItemEntryMode.manual) {
-            // Manual Entry Mode: SKU code is typed manually digit-by-digit from POS custom on-screen numpad
+          if (effectiveMode == ItemEntryMode.manualNumpad) {
+            // Manual Numpad Mode: Short code / digits typed digit-by-digit on POS order numpad
             final digits = item.skuCode.trim().replaceAll(RegExp(r'[^\d]'), '');
             _trace(
-              'Manual Entry Mode: Typing custom numpad digits [$digits] for SKU "${item.skuCode}"...',
+              'Manual Numpad Mode: Typing custom numpad digits [$digits] for SKU "${item.skuCode}"...',
             );
             for (final digit in digits.split('')) {
               final key = PenguinPosOrderKeys.orderNumPadDigit(digit);
@@ -299,14 +312,36 @@ class PenguinPosOrderRunner {
               PenguinPosOrderKeys.orderNumPadEnter,
               delay: delay,
             );
-          } else {
-            // Scan Mode (Default): Barcode/SKU string is scanned directly into app textfield
+          } else if (effectiveMode == ItemEntryMode.manualQwerty) {
+            // Manual QWERTY Mode: Standard SKU / Offer ID typed via order.qwerty keyboard
             _trace(
-              'Scan Mode: Scanning barcode/SKU "${item.skuCode.trim()}" into app input textfield...',
+              'Manual QWERTY Mode: Typing SKU "${item.skuCode.trim()}" via order.qwerty keyboard...',
+            );
+            await engine.tap(
+              PenguinPosOrderKeys.orderKeyboardToggle,
+              delay: delay,
             );
             await engine.waitFor(
-              PenguinPosOrderKeys.orderInputCode,
+              PenguinPosOrderKeys.orderQwertyKey('a'),
               timeout: timeout,
+            );
+            await engine.enterTextViaVirtualKeyboard(
+              PenguinPosOrderKeys.orderInputCode,
+              item.skuCode.trim(),
+              keyPrefix: 'order.qwerty',
+              mode: TextInputMode.customQwertyPad,
+              delay: delay,
+            );
+            await engine.tap(
+              PenguinPosOrderKeys.orderQwertyEnter,
+              delay: delay,
+            );
+          } else {
+            // Scan mode is currently QA automatic input: inject the complete
+            // code into the order field, then use the normal order submit
+            // control. It does not emulate a hardware scanner.
+            _trace(
+              'Scan Mode: Automatically entering SKU "${item.skuCode.trim()}" into the order field...',
             );
             await engine.enterText(
               PenguinPosOrderKeys.orderInputCode,
@@ -320,7 +355,7 @@ class PenguinPosOrderRunner {
           }
 
           // Manual Weight Entry for Weighed SKU items via Weight Numpad modal
-          if (item.type == SkuItemType.weighed && item.weight != null) {
+          if (effectiveType == SkuItemType.weighed && item.weight != null) {
             await engine.waitFor(
               PenguinPosOrderKeys.orderInputWeight,
               timeout: timeout,

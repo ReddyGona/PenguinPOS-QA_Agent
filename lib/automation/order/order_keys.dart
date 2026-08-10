@@ -6,12 +6,15 @@ abstract final class PenguinPosOrderKeys {
   static const continueWithoutCustomer = 'sale.continuewithoutcustomer';
   static const orderTable = 'order.table';
   static const orderNumPadSection = 'order.numpad.section';
-  static const orderInputCode = 'order.numpad.input.code';
+  static const orderInputCode = 'order.code.input';
   static const orderInputWeight = 'order.numpad.input.weight';
   static const orderInputQuantity = 'order.numpad.input.quantity';
 
   static String orderNumPadDigit(String n) => 'order.numpad.digit.$n';
   static const orderNumPadEnter = 'order.numpad.enter';
+  static const orderKeyboardToggle = 'order.keyboard.toggle';
+  static String orderQwertyKey(String char) => 'order.qwerty.key.$char';
+  static const orderQwertyEnter = 'order.qwerty.enter';
 
   static const orderUpdateCart = 'order.update_cart';
   static const orderProceedToPay = 'order.proceed_to_pay';

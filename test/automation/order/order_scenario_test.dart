@@ -103,10 +103,10 @@ void main() {
 2,2000011017354,bizerba,,scan''';
       final parsedCsv = OrderScenario.parseCsvOrders(csv);
       expect(parsedCsv[1]![0].type, SkuItemType.nonWeighed);
-      expect(parsedCsv[1]![0].entryMode, ItemEntryMode.scan);
+      expect(parsedCsv[1]![0].effectiveEntryMode, ItemEntryMode.manualNumpad);
       expect(parsedCsv[1]![1].type, SkuItemType.weighed);
       expect(parsedCsv[1]![1].weight, 1.25);
-      expect(parsedCsv[1]![1].entryMode, ItemEntryMode.manual);
+      expect(parsedCsv[1]![1].effectiveEntryMode, ItemEntryMode.manualNumpad);
       expect(parsedCsv[2]!.single.type, SkuItemType.bizerba);
 
       const json = '''[
@@ -116,7 +116,63 @@ void main() {
       ]''';
       final parsedJson = OrderScenario.parseJsonOrders(json);
       expect(parsedJson[1]!.single.type, SkuItemType.weighed);
-      expect(parsedJson[1]!.single.entryMode, ItemEntryMode.manual);
+      expect(
+        parsedJson[1]!.single.effectiveEntryMode,
+        ItemEntryMode.manualNumpad,
+      );
+    });
+
+    test(
+      'normalizes Bizerba formats and forces scan mode at import boundaries',
+      () {
+        final fromJson = OrderItem.fromJson(<String, Object?>{
+          'skuCode': ' 10000001W3.709 ',
+          // A model or import can supply a conflicting type/mode. The barcode
+          // contract must still win before the runner sees the item.
+          'type': 'nonWeighed',
+          'entryMode': 'manualQwerty',
+        });
+
+        expect(fromJson.type, SkuItemType.bizerba);
+        expect(fromJson.effectiveType, SkuItemType.bizerba);
+        expect(fromJson.effectiveEntryMode, ItemEntryMode.scan);
+        expect(fromJson.toJson()['type'], 'bizerba');
+        expect(fromJson.toJson()['entryMode'], 'scan');
+
+        final fromCsv = OrderScenario.parseCsvOrders(
+          '''Order,SKU,ItemType,EntryMode
+1,12345678.123,nonWeighed,manual''',
+        );
+        final numericBizerba = fromCsv[1]!.single;
+        expect(numericBizerba.type, SkuItemType.bizerba);
+        expect(numericBizerba.effectiveEntryMode, ItemEntryMode.scan);
+      },
+    );
+
+    test('enforces short-code numpad entry and preserves SKU mode choices', () {
+      final shortCode = OrderItem.fromJson(<String, Object?>{
+        'skuCode': '105',
+        'entryMode': 'scan',
+      });
+      expect(shortCode.effectiveEntryMode, ItemEntryMode.manualNumpad);
+
+      final legacyManual = OrderItem.fromJson(<String, Object?>{
+        'skuCode': '10000002',
+        'entryMode': 'manual',
+      });
+      expect(legacyManual.entryMode, ItemEntryMode.manualNumpad);
+      expect(legacyManual.effectiveEntryMode, ItemEntryMode.manualNumpad);
+
+      final qwertySku = OrderItem.fromJson(<String, Object?>{
+        'skuCode': 'OFFER123',
+        'entryMode': 'qwerty',
+      });
+      expect(qwertySku.effectiveEntryMode, ItemEntryMode.manualQwerty);
+
+      final defaultSku = OrderItem.fromJson(<String, Object?>{
+        'skuCode': '8901058000123',
+      });
+      expect(defaultSku.effectiveEntryMode, ItemEntryMode.scan);
     });
   });
 }

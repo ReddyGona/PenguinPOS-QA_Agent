@@ -45,8 +45,8 @@ void main() {
         everyElement(SkuItemType.nonWeighed),
       );
       expect(
-        ready.plan!.items.map((item) => item.entryMode),
-        everyElement(ItemEntryMode.manual),
+        ready.plan!.items.map((item) => item.effectiveEntryMode),
+        everyElement(ItemEntryMode.manualNumpad),
       );
     },
   );
@@ -85,8 +85,8 @@ void main() {
         everyElement(SkuItemType.nonWeighed),
       );
       expect(
-        response.plan!.items.map((i) => i.entryMode),
-        everyElement(ItemEntryMode.manual),
+        response.plan!.items.map((i) => i.effectiveEntryMode),
+        everyElement(ItemEntryMode.manualNumpad),
       );
       expect(response.richContent, isA<AiRichPlanSummary>());
       final rich = response.richContent as AiRichPlanSummary;
@@ -115,8 +115,8 @@ void main() {
         everyElement(SkuItemType.nonWeighed),
       );
       expect(
-        response.plan!.items.map((item) => item.entryMode),
-        everyElement(ItemEntryMode.manual),
+        response.plan!.items.map((item) => item.effectiveEntryMode),
+        everyElement(ItemEntryMode.manualNumpad),
       );
     },
   );
@@ -144,14 +144,14 @@ void main() {
       expect(bizerba.type, SkuItemType.bizerba);
       expect(bizerba.entryMode, ItemEntryMode.scan);
 
-      // Short numeric SKUs: classified as Non-Weighed + Manual.
+      // Short numeric SKUs: classified as Non-Weighed + Manual Numpad.
       final sku22 = response.plan!.items.firstWhere((i) => i.skuCode == '22');
       expect(sku22.type, SkuItemType.nonWeighed);
-      expect(sku22.entryMode, ItemEntryMode.manual);
+      expect(sku22.effectiveEntryMode, ItemEntryMode.manualNumpad);
 
       final sku11 = response.plan!.items.firstWhere((i) => i.skuCode == '11');
       expect(sku11.type, SkuItemType.nonWeighed);
-      expect(sku11.entryMode, ItemEntryMode.manual);
+      expect(sku11.effectiveEntryMode, ItemEntryMode.manualNumpad);
 
       // Literal 'sku' must never appear as a SKU code.
       expect(
@@ -177,7 +177,10 @@ void main() {
       expect(response.plan!.profileId, 'kpn-dev');
       expect(response.plan!.items.first.skuCode, '22');
       expect(response.plan!.items.first.type, SkuItemType.nonWeighed);
-      expect(response.plan!.items.first.entryMode, ItemEntryMode.manual);
+      expect(
+        response.plan!.items.first.effectiveEntryMode,
+        ItemEntryMode.manualNumpad,
+      );
     },
   );
 
@@ -206,7 +209,10 @@ void main() {
       expect(response.plan!.profileId, 'kpn-dev');
       expect(response.plan!.items.first.skuCode, '22');
       expect(response.plan!.items.first.type, SkuItemType.nonWeighed);
-      expect(response.plan!.items.first.entryMode, ItemEntryMode.manual);
+      expect(
+        response.plan!.items.first.effectiveEntryMode,
+        ItemEntryMode.manualNumpad,
+      );
     },
   );
 
@@ -249,12 +255,12 @@ void main() {
       final order1 = response.plan!.perIterationItems[1]!;
       expect(order1.first.skuCode, '22');
       expect(order1.first.type, SkuItemType.nonWeighed);
-      expect(order1.first.entryMode, ItemEntryMode.manual);
+      expect(order1.first.effectiveEntryMode, ItemEntryMode.manualNumpad);
 
       final order2 = response.plan!.perIterationItems[2]!;
       expect(order2.first.skuCode, '11');
       expect(order2.first.type, SkuItemType.nonWeighed);
-      expect(order2.first.entryMode, ItemEntryMode.manual);
+      expect(order2.first.effectiveEntryMode, ItemEntryMode.manualNumpad);
 
       final order3 = response.plan!.perIterationItems[3]!;
       expect(order3.first.skuCode, '10000001W3.337');

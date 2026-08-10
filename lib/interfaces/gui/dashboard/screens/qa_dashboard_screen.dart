@@ -22,7 +22,9 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/orde
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/ai_assistant_workspace.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/qa_settings_screen.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_credential_vault.dart';
+import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/domain/plan/execution_plan.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/speed_selector_widget.dart';
 
 /// Coordinates dashboard configuration, test execution, and the AI workspace.
 ///
@@ -64,6 +66,9 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
   bool get _hasActiveWork => _running || _aiPlanningWaiting;
   AiModelConfig _aiModelConfig = const AiModelConfig();
+
+  ExecutionSpeed _manualExecutionSpeed = ExecutionSpeed.oneX;
+  ExecutionSpeed _aiExecutionSpeed = ExecutionSpeed.oneX;
 
   bool _running = false;
   bool _stopRequested = false;
@@ -921,6 +926,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         final result = await PenguinPosOrderRunner().run(
           scenario,
           vmServiceUri: launched.vmServiceUri,
+          speed: _manualExecutionSpeed,
           onScenarioCompleted: _recordCompletedScenario,
           onBatchProgress: (completed, total) {
             _addMessage(
@@ -979,6 +985,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
             unlockPin: _unlockPin,
           ),
           vmServiceUri: launched.vmServiceUri,
+          speed: _manualExecutionSpeed,
           onExecutionEvent: _recordExecutionEvent,
           onScenarioCompleted: _recordCompletedScenario,
         );
@@ -1360,6 +1367,13 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
                 color: Color(0xFF64748B),
               ),
             ),
+            const SizedBox(width: 12),
+            SpeedSelectorWidget(
+              selected: _aiExecutionSpeed,
+              onChanged: (speed) => setState(() => _aiExecutionSpeed = speed),
+              enabled: !_running,
+              variant: SpeedSelectorVariant.compactDropdown,
+            ),
           ],
         ),
       ],
@@ -1413,6 +1427,9 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
             setState(() => _orderScenario = scenario),
         onRunSuite: _runSelectedSuite,
         onStopSuite: _stopRunningSuite,
+        speed: _manualExecutionSpeed,
+        onSpeedChanged: (speed) =>
+            setState(() => _manualExecutionSpeed = speed),
       );
     }
     return LoginSuiteScreen(
@@ -1433,6 +1450,8 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       onPasswordChanged: (password) => setState(() => _password = password),
       onRunSuite: _runSelectedSuite,
       onStopSuite: _stopRunningSuite,
+      speed: _manualExecutionSpeed,
+      onSpeedChanged: (speed) => setState(() => _manualExecutionSpeed = speed),
     );
   }
 

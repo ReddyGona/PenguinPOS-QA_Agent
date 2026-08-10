@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
+import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
@@ -9,6 +10,7 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/widg
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/widgets/order_instructions_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/widgets/order_results_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/qa_panel.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/speed_selector_widget.dart';
 
 /// Screen dedicated to configuring SKU lists, orders count, and running Order & Cash Payment automation test suites.
 class OrderSuiteScreen extends StatefulWidget {
@@ -30,6 +32,8 @@ class OrderSuiteScreen extends StatefulWidget {
     required this.onUpdateScenario,
     required this.onRunSuite,
     required this.onStopSuite,
+    this.speed = ExecutionSpeed.oneX,
+    this.onSpeedChanged,
   });
 
   final TestSuiteItem suite;
@@ -50,6 +54,8 @@ class OrderSuiteScreen extends StatefulWidget {
   final ValueChanged<OrderScenario> onUpdateScenario;
   final VoidCallback onRunSuite;
   final VoidCallback onStopSuite;
+  final ExecutionSpeed speed;
+  final ValueChanged<ExecutionSpeed>? onSpeedChanged;
 
   @override
   State<OrderSuiteScreen> createState() => _OrderSuiteScreenState();
@@ -472,6 +478,15 @@ class _OrderSuiteScreenState extends State<OrderSuiteScreen>
               ],
             ),
           ),
+          if (widget.onSpeedChanged != null) ...[
+            SpeedSelectorWidget(
+              selected: widget.speed,
+              onChanged: widget.onSpeedChanged!,
+              enabled: !widget.running,
+              variant: SpeedSelectorVariant.segmented,
+            ),
+            const SizedBox(width: 12),
+          ],
 
           if (widget.running) ...<Widget>[
             OutlinedButton.icon(
