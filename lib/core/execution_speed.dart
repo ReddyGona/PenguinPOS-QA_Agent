@@ -46,6 +46,21 @@ class ExecutionSpeed {
   static const medium = ExecutionSpeed(preset: SpeedPreset.medium);
   static const slow = ExecutionSpeed(preset: SpeedPreset.slow);
 
+  /// Parses a string representation ('turbo', '2x', 'fast', 'medium', 'slow', '0.5x') into an [ExecutionSpeed].
+  static ExecutionSpeed parse(String? raw) {
+    if (raw == null) return ExecutionSpeed.oneX;
+    final normalized = raw.trim().toLowerCase();
+    return switch (normalized) {
+      'turbo' || 'turbomode' || 'turbo mode' => ExecutionSpeed.turbo,
+      '2x' || 'double speed' => ExecutionSpeed.twoX,
+      '0.5x' || 'half' || 'half speed' => ExecutionSpeed.halfX,
+      'fast' || 'very fast' || '1x' => ExecutionSpeed.oneX,
+      'medium' => ExecutionSpeed.medium,
+      'slow' => ExecutionSpeed.slow,
+      _ => ExecutionSpeed.oneX,
+    };
+  }
+
   /// Returns the actual duration to delay between driver actions.
   Duration get delay {
     if (customDelay != null) return customDelay!;

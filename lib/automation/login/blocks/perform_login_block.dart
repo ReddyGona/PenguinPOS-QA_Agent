@@ -12,7 +12,7 @@ class PerformLoginBlock implements AutomationBlock {
 
   PerformLoginBlock({
     required this.scenario,
-    this.mode = TextInputMode.customQwertyPad,
+    this.mode = TextInputMode.driverDirect,
     this.keyPrefix = 'login.qwerty',
   });
 
@@ -27,6 +27,11 @@ class PerformLoginBlock implements AutomationBlock {
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
+      delay: context.speed.delay,
+    );
+    // Explicitly focus loginId field to reset form focus state
+    await context.driver.tap(
+      PenguinPosLoginKeys.loginId,
       delay: context.speed.delay,
     );
     await context.driver.enterTextViaVirtualKeyboard(

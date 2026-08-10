@@ -72,7 +72,7 @@ class PenguinPosLoginRunner {
     ExecutionSpeed speed = const ExecutionSpeed(),
     Duration timeout = const Duration(seconds: 45),
     Driver? driverEngine,
-    TextInputMode mode = TextInputMode.customQwertyPad,
+    TextInputMode mode = TextInputMode.driverDirect,
     void Function(ExecutionEvent event)? onExecutionEvent,
     void Function(String scenarioName)? onScenarioCompleted,
   }) async {
@@ -136,7 +136,7 @@ class PenguinPosLoginRunner {
     ExecutionSpeed speed = const ExecutionSpeed(),
     Duration timeout = const Duration(seconds: 45),
     Driver? driverEngine,
-    TextInputMode mode = TextInputMode.customQwertyPad,
+    TextInputMode mode = TextInputMode.driverDirect,
   }) async {
     final activeDriver = driverEngine ?? DriverEngine();
 

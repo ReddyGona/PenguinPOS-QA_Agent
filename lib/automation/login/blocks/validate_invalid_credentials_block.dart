@@ -9,7 +9,7 @@ class ValidateInvalidCredentialsBlock implements AutomationBlock {
   final String keyPrefix;
 
   ValidateInvalidCredentialsBlock({
-    this.mode = TextInputMode.customQwertyPad,
+    this.mode = TextInputMode.driverDirect,
     this.keyPrefix = 'login.qwerty',
   });
 
@@ -21,6 +21,15 @@ class ValidateInvalidCredentialsBlock implements AutomationBlock {
 
   @override
   Future<void> execute(ExecutionContext context) async {
+    await context.driver.waitFor(
+      PenguinPosLoginKeys.loginId,
+      timeout: context.timeout,
+      delay: context.speed.delay,
+    );
+    await context.driver.tap(
+      PenguinPosLoginKeys.loginId,
+      delay: context.speed.delay,
+    );
     await context.driver.enterTextViaVirtualKeyboard(
       PenguinPosLoginKeys.loginId,
       '0000000000',
@@ -39,6 +48,8 @@ class ValidateInvalidCredentialsBlock implements AutomationBlock {
       PenguinPosLoginKeys.submit,
       delay: context.speed.delay,
     );
+    // Pause to allow backend authentication failure API call to finish and reset form state to idle
+    await context.driver.stepPause(const Duration(seconds: 2));
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,

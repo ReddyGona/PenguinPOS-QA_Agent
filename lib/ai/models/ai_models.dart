@@ -473,10 +473,15 @@ class AiAssistantResponse {
           ? AiAssistantResponseKind.clarification
           : AiAssistantResponseKind.plan,
     );
+    final knowledge = _parseKnowledge(json['knowledge']);
+    final rawMessage = (json['message'] as String?)?.trim();
+    final defaultMessage = knowledge != null
+        ? 'Coverage and scenario overview for your request:'
+        : 'I could not create a safe QA plan from that request.';
     return AiAssistantResponse(
-      message:
-          (json['message'] as String?)?.trim() ??
-          'I could not create a safe QA plan from that request.',
+      message: (rawMessage != null && rawMessage.isNotEmpty)
+          ? rawMessage
+          : defaultMessage,
       state: AiPlanState.values.firstWhere(
         (state) => state.name == json['state'],
         orElse: () => AiPlanState.needsInput,
@@ -487,7 +492,7 @@ class AiAssistantResponse {
               .whereType<String>()
               .toList(),
       kind: requestedKind,
-      knowledge: _parseKnowledge(json['knowledge']),
+      knowledge: knowledge,
     );
   }
 

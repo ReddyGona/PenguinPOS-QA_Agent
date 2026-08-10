@@ -90,17 +90,15 @@ class AiOrchestrator {
       return _validate(slashResponse, input: input, history: history);
     }
 
-    if (model == null) {
-      // Offline compatibility only. A configured model always receives
-      // free-form natural language before either deterministic parser runs.
-      final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
-        input,
-        profiles,
-      );
-      if (naturalLoginResponse != null) {
-        return _validate(naturalLoginResponse, input: input, history: history);
-      }
+    final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
+      input,
+      profiles,
+    );
+    if (naturalLoginResponse != null) {
+      return _validate(naturalLoginResponse, input: input, history: history);
+    }
 
+    if (model == null) {
       final newOrderDraft = _startOrderDraft(input);
       if (newOrderDraft != null) return newOrderDraft;
 

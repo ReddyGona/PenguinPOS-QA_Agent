@@ -136,6 +136,15 @@ class SlashCommandParser {
         plan: plan,
         message:
             'Login flow selected for ${profile.label}. Review the plan to proceed with preflight checks.',
+        richContent: AiRichPlanSummary(
+          profileLabel: profile.label,
+          workflowLabel: 'Login & Terminal Setup',
+          scenarios: const <AiScenarioRow>[
+            AiScenarioRow(name: 'Login Validation'),
+            AiScenarioRow(name: 'Auth Failure Handling'),
+            AiScenarioRow(name: 'Valid Login Flow'),
+          ],
+        ),
       );
     }
 

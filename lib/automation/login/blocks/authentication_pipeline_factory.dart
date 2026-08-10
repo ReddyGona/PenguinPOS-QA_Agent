@@ -12,7 +12,7 @@ abstract final class AuthenticationPipelineFactory {
   static Future<List<AutomationBlock>> createSetupPipeline(
     ExecutionContext context,
     LoginScenario scenario, {
-    TextInputMode mode = TextInputMode.customQwertyPad,
+    TextInputMode mode = TextInputMode.driverDirect,
   }) async {
     final activeState = await context.driver.waitForAnyKey([
       PenguinPosLoginKeys.loginId,

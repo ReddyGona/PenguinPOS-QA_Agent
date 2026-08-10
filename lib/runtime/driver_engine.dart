@@ -225,19 +225,22 @@ class DriverEngine implements Driver {
     String targetInputKey,
     String text, {
     String keyPrefix = 'login.qwerty',
-    TextInputMode mode = TextInputMode.customQwertyPad,
+    TextInputMode mode = TextInputMode.driverDirect,
     Duration? delay,
   }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
 
-    // 1. Focus target input field
-    await tap(targetInputKey, delay: delay);
-
     if (mode == TextInputMode.driverDirect) {
       await enterText(targetInputKey, text, delay: delay);
       return;
     }
+
+    // 1. Focus target input field for custom virtual keyboards
+    await tap(targetInputKey, delay: delay);
+
+    // Clear existing text field content before virtual key entry
+    await driver.enterText('');
 
     var isShiftActive = false;
 
