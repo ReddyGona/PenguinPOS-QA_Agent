@@ -15,16 +15,11 @@ class ValidateEmptyCredentialsBlock implements AutomationBlock {
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
-    await context.driver.tap(
-      PenguinPosLoginKeys.submit,
-      delay: context.speed.delay,
-    );
+    await context.driver.tap(PenguinPosLoginKeys.submit);
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
   }
 }

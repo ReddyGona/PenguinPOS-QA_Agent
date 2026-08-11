@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/ai/models/flutter_knowledge_catalogue.dart';
 import 'package:penguin_pos_qa_agent/ai/models/qa_knowledge_catalogue.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/knowledge_intent_router.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/slash_command_parser.dart';
@@ -50,6 +51,36 @@ class AiOrchestrator {
     AiModelEventCallback? onEvent,
   }) async {
     final model = provider;
+
+    // Explicit test requests must not be treated as read-only Flutter
+    // documentation questions merely because they mention the driver.
+    if (_hasExplicitExecutionIntent(input)) {
+      final slashResponse = _slashCommandParser.parse(input, profiles);
+      if (slashResponse != null) {
+        return _validate(slashResponse, input: input, history: history);
+      }
+
+      final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
+        input,
+        profiles,
+      );
+      if (naturalLoginResponse != null) {
+        return _validate(naturalLoginResponse, input: input, history: history);
+      }
+    }
+
+    // Flutter testing/documentation questions are read-only and source-backed.
+    // Resolve them before model planning, so the Assistant can reliably answer
+    // product-testing questions even when a configured model is unavailable or
+    // would otherwise invent framework capabilities.
+    final flutterKnowledge = FlutterKnowledgeCatalogue.answerFor(input);
+    if (flutterKnowledge != null) {
+      _emitKnowledgeEvents(onEvent);
+      return AiAssistantResponse.knowledge(
+        message: flutterKnowledge.summary,
+        knowledge: flutterKnowledge,
+      );
+    }
 
     // Informational questions are resolved before shortcut parsing so a
     // reference such as "Explain /login" cannot accidentally prepare a run.
@@ -220,6 +251,20 @@ class AiOrchestrator {
             'I could not read a safe test plan from that response. Please try again with the target, SKU, and entry method stated clearly.',
       );
     }
+  }
+
+  static bool _hasExplicitExecutionIntent(String input) {
+    final normalized = input.toLowerCase();
+    final isInformational = RegExp(
+      r'\b(?:explain|what|how|why|meaning|define)\b',
+    ).hasMatch(normalized);
+    final hasWorkflow = RegExp(
+      r'(?:^|\s)/(?:login|orders?)(?:\s|$)',
+    ).hasMatch(normalized);
+    final hasNaturalRequest = RegExp(
+      r'\b(?:run|execute|test)\b.*\b(?:login|log\s+in|sign\s+in)\b',
+    ).hasMatch(normalized);
+    return !isInformational && (hasWorkflow || hasNaturalRequest);
   }
 
   /// Creates or completes a local order draft from unambiguous user-provided

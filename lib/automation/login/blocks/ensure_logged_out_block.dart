@@ -21,30 +21,25 @@ class EnsureLoggedOutBlock implements AutomationBlock {
       return;
     }
 
+    await context.driver.clearSnackBars();
+
     final hasKeyedLogout = await context.driver.hasKey(
       PenguinPosLoginKeys.logoutButton,
-      timeout: const Duration(seconds: 2),
+      timeout: const Duration(seconds: 1),
     );
     if (hasKeyedLogout) {
-      await context.driver.tap(
-        PenguinPosLoginKeys.logoutButton,
-        delay: context.speed.delay,
-      );
+      await context.driver.tap(PenguinPosLoginKeys.logoutButton);
     } else {
-      await context.driver.tapText('LOGOUT', delay: context.speed.delay);
+      await context.driver.tapText('LOGOUT');
     }
     await context.driver.waitFor(
       PenguinPosLoginKeys.logoutConfirm,
       timeout: context.timeout,
     );
-    await context.driver.tap(
-      PenguinPosLoginKeys.logoutConfirm,
-      delay: context.speed.delay,
-    );
+    await context.driver.tap(PenguinPosLoginKeys.logoutConfirm);
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
   }
 }

@@ -1,11 +1,9 @@
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
-import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 
 /// Execution context passed to every [AutomationBlock] during test pipeline execution.
 class ExecutionContext {
   final Driver driver;
-  final ExecutionSpeed speed;
   final Duration timeout;
   final void Function(ExecutionEvent event)? onEvent;
 
@@ -14,7 +12,6 @@ class ExecutionContext {
 
   ExecutionContext({
     required this.driver,
-    this.speed = const ExecutionSpeed(),
     this.timeout = const Duration(seconds: 45),
     this.onEvent,
   });

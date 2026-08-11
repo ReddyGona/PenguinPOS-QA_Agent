@@ -7,4 +7,14 @@ abstract final class PenguinPosLoginKeys {
   static const homeScreen = 'home.screen';
   static const logoutButton = 'logout.button';
   static const logoutConfirm = 'logout.confirm';
+
+  // Feature-specific Snackbar & Dismissal keys
+  static const loginErrorSnackBar = 'login.error_snackbar';
+  static const loginErrorDismiss = 'login.error_snackbar_dismiss';
+  static const terminalErrorSnackBar = 'terminal.error_snackbar';
+  static const terminalErrorDismiss = 'terminal.error_snackbar_dismiss';
+
+  // Global fallbacks
+  static const authErrorSnackBar = loginErrorSnackBar;
+  static const authErrorDismiss = loginErrorDismiss;
 }

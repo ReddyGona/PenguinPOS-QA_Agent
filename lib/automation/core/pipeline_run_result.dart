@@ -4,7 +4,6 @@ class PipelineRunResult {
     required this.passed,
     required this.startedAt,
     required this.finishedAt,
-    this.speed = 'fast',
     this.scenariosExecuted = const <String>[],
     this.vmServiceUri,
     this.error,
@@ -16,7 +15,6 @@ class PipelineRunResult {
   final bool passed;
   final DateTime startedAt;
   final DateTime finishedAt;
-  final String speed;
   final List<String> scenariosExecuted;
   final Uri? vmServiceUri;
   final String? error;
@@ -29,7 +27,6 @@ class PipelineRunResult {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'passed': passed,
-    'speed': speed,
     'scenariosExecuted': scenariosExecuted,
     'wasAppClosedByUser': wasAppClosedByUser,
     'startedAt': startedAt.toUtc().toIso8601String(),

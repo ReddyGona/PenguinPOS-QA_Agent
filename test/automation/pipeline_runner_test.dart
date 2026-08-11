@@ -30,14 +30,12 @@ class FakeDriverEngine implements Driver {
   Future<void> waitFor(
     String key, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   }) async {}
 
   @override
   Future<void> waitForAbsent(
     String key, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   }) async {}
 
   @override
@@ -52,7 +50,6 @@ class FakeDriverEngine implements Driver {
   Future<void> waitForText(
     String text, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   }) async {}
 
   @override
@@ -62,6 +59,8 @@ class FakeDriverEngine implements Driver {
   }) async {
     return key == PenguinPosLoginKeys.loginId ||
         key == PenguinPosLoginKeys.logoutButton ||
+        key == PenguinPosLoginKeys.authErrorSnackBar ||
+        key == PenguinPosLoginKeys.loginErrorSnackBar ||
         key == 'login.qwerty.key.a';
   }
 
@@ -77,7 +76,6 @@ class FakeDriverEngine implements Driver {
   Future<void> enterText(
     String key,
     String text, {
-    Duration? delay,
     Duration timeout = const Duration(seconds: 2),
   }) async {
     enteredTexts.add('$key:$text');
@@ -89,7 +87,6 @@ class FakeDriverEngine implements Driver {
     String text, {
     String keyPrefix = 'login.qwerty',
     TextInputMode mode = TextInputMode.customQwertyPad,
-    Duration? delay,
   }) async {
     tappedKeys.add('focus:$targetInputKey');
     for (var i = 0; i < text.length; i++) {
@@ -121,12 +118,12 @@ class FakeDriverEngine implements Driver {
   }) async => '';
 
   @override
-  Future<void> tap(String key, {Duration? delay}) async {
+  Future<void> tap(String key) async {
     tappedKeys.add(key);
   }
 
   @override
-  Future<void> tapText(String text, {Duration? delay}) async {
+  Future<void> tapText(String text) async {
     tappedKeys.add('text:$text');
   }
 
@@ -134,18 +131,22 @@ class FakeDriverEngine implements Driver {
   Future<bool> tryTapText(
     String text, {
     Duration timeout = const Duration(seconds: 3),
-    Duration? delay,
   }) async => true;
 
   @override
   Future<bool> tryTapKey(
     String key, {
     Duration timeout = const Duration(seconds: 3),
-    Duration? delay,
   }) async => true;
 
   @override
-  Future<void> stepPause(Duration delay) async {}
+  Future<String?> requestData(
+    String message, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async => 'cleared';
+
+  @override
+  Future<bool> clearSnackBars() async => true;
 
   @override
   Future<void> close() async {

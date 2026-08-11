@@ -20,7 +20,7 @@ void main() {
     });
 
     test(
-      'LoginRunResult serializes cleanly to JSON without leaking secrets and includes speed and scenariosExecuted',
+      'LoginRunResult serializes cleanly to JSON without leaking secrets and includes scenariosExecuted',
       () {
         final started = DateTime.parse('2026-08-06T10:00:00Z');
         final finished = DateTime.parse('2026-08-06T10:00:05Z');
@@ -28,7 +28,6 @@ void main() {
           passed: true,
           startedAt: started,
           finishedAt: finished,
-          speed: 'medium',
           scenariosExecuted: const <String>[
             'empty_credentials_validation',
             'invalid_credentials_attempt',
@@ -39,7 +38,6 @@ void main() {
 
         final json = result.toJson();
         expect(json['passed'], isTrue);
-        expect(json['speed'], equals('medium'));
         expect(
           json['scenariosExecuted'],
           equals(<String>[

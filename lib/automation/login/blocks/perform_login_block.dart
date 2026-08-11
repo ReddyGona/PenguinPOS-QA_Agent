@@ -24,33 +24,25 @@ class PerformLoginBlock implements AutomationBlock {
 
   @override
   Future<void> execute(ExecutionContext context) async {
+    await context.driver.clearSnackBars();
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
     // Explicitly focus loginId field to reset form focus state
-    await context.driver.tap(
-      PenguinPosLoginKeys.loginId,
-      delay: context.speed.delay,
-    );
+    await context.driver.tap(PenguinPosLoginKeys.loginId);
     await context.driver.enterTextViaVirtualKeyboard(
       PenguinPosLoginKeys.loginId,
       scenario.loginId,
       keyPrefix: keyPrefix,
       mode: mode,
-      delay: context.speed.delay,
     );
     await context.driver.enterTextViaVirtualKeyboard(
       PenguinPosLoginKeys.password,
       scenario.password,
       keyPrefix: keyPrefix,
       mode: mode,
-      delay: context.speed.delay,
     );
-    await context.driver.tap(
-      PenguinPosLoginKeys.submit,
-      delay: context.speed.delay,
-    );
+    await context.driver.tap(PenguinPosLoginKeys.submit);
   }
 }

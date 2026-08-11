@@ -1,9 +1,9 @@
 import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
+import 'package:penguin_pos_qa_agent/automation/core/automation_pipeline.dart';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pipeline_run_result.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
-import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/core/secret_redactor.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
 
@@ -14,7 +14,6 @@ class PipelineRunner {
     required Uri vmServiceUri,
     List<AutomationBlock> cleanupBlocks = const <AutomationBlock>[],
     Driver? driver,
-    ExecutionSpeed speed = const ExecutionSpeed(),
     Duration timeout = const Duration(seconds: 45),
     void Function(ExecutionEvent event)? onExecutionEvent,
     void Function(String scenarioName)? onScenarioCompleted,
@@ -24,7 +23,6 @@ class PipelineRunner {
     final activeDriver = driver ?? DriverEngine();
     final context = ExecutionContext(
       driver: activeDriver,
-      speed: speed,
       timeout: timeout,
       onEvent: onExecutionEvent,
     );
@@ -38,12 +36,13 @@ class PipelineRunner {
       await activeDriver.connect(vmServiceUri, timeout: timeout);
       context.emit('Driver Connected', 'Connected to PenguinPOS Driver.');
 
-      for (final block in blocks) {
-        context.emit(block.name, 'Executing step...');
-        await block.execute(context);
-        executed.add(block.name);
-        onScenarioCompleted?.call(block.name);
-      }
+      final pipeline = AutomationPipeline();
+      final ranNames = await pipeline.execute(
+        blocks,
+        context,
+        onScenarioCompleted: onScenarioCompleted,
+      );
+      executed.addAll(ranNames);
     } catch (error) {
       isPassed = false;
       errorStr = redactSecrets(error.toString(), secretsToRedact);
@@ -91,7 +90,6 @@ class PipelineRunner {
       passed: isPassed,
       startedAt: startedAt,
       finishedAt: DateTime.now(),
-      speed: speed.name,
       scenariosExecuted: executed,
       vmServiceUri: vmServiceUri,
       error: errorStr,

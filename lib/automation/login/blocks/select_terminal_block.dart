@@ -16,14 +16,11 @@ class SelectTerminalBlock implements AutomationBlock {
 
   @override
   Future<void> execute(ExecutionContext context) async {
+    await context.driver.clearSnackBars();
     await context.driver.waitFor(
       scenario.terminalContinueKey,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
-    await context.driver.tap(
-      scenario.terminalContinueKey,
-      delay: context.speed.delay,
-    );
+    await context.driver.tap(scenario.terminalContinueKey);
   }
 }

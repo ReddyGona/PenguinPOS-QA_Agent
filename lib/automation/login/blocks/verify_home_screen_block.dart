@@ -12,14 +12,13 @@ class VerifyHomeScreenBlock implements AutomationBlock {
   String get id => 'verify_home_screen';
 
   @override
-  String get name => 'Verify Home Screen';
+  String get name => 'Valid Login Flow';
 
   @override
   Future<void> execute(ExecutionContext context) async {
     await context.driver.waitFor(
       scenario.expectedKey,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
   }
 }

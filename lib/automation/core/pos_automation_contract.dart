@@ -13,6 +13,10 @@ class IncompatibleAppException implements Exception {
 abstract final class PosAutomationContract {
   static const version = '1.0.0';
 
+  // Generic global Snackbar keys across all POS feature modules
+  static const snackBar = 'global.snackbar';
+  static const snackBarDismiss = 'global.snackbar_dismiss';
+
   // Key builders for CustomQwertyPad
   static String qwertyKey(String prefix, String char) => '$prefix.key.$char';
   static String qwertyShift(String prefix) => '$prefix.shift';

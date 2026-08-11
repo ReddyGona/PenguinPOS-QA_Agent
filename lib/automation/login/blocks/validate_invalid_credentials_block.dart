@@ -24,36 +24,28 @@ class ValidateInvalidCredentialsBlock implements AutomationBlock {
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
-    await context.driver.tap(
-      PenguinPosLoginKeys.loginId,
-      delay: context.speed.delay,
-    );
+    await context.driver.tap(PenguinPosLoginKeys.loginId);
     await context.driver.enterTextViaVirtualKeyboard(
       PenguinPosLoginKeys.loginId,
       '0000000000',
       keyPrefix: keyPrefix,
       mode: mode,
-      delay: context.speed.delay,
     );
     await context.driver.enterTextViaVirtualKeyboard(
       PenguinPosLoginKeys.password,
       'invalidpassword',
       keyPrefix: keyPrefix,
       mode: mode,
-      delay: context.speed.delay,
     );
-    await context.driver.tap(
-      PenguinPosLoginKeys.submit,
-      delay: context.speed.delay,
-    );
-    // Pause to allow backend authentication failure API call to finish and reset form state to idle
-    await context.driver.stepPause(const Duration(seconds: 2));
+    await context.driver.tap(PenguinPosLoginKeys.submit);
+
+    // Immediately sweep active snackbar via clear_snackbars driver extension
+    await context.driver.clearSnackBars();
+
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
   }
 }

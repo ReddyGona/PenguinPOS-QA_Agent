@@ -1,8 +1,5 @@
 library;
 
-// ── Core: Shared safety and execution utilities ──────────────────────────────
-export 'core/execution_speed.dart';
-
 // ── Automation Engine: Test Runners & Key Contracts ──────────────────────────
 export 'automation/login/login_keys.dart';
 export 'automation/login/login_runner.dart';

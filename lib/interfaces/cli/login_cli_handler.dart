@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
-import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
 
 /// Handler encapsulating command-line arguments parsing, interactive stdin fallback, and test execution for login CLI subcommands.
@@ -24,17 +23,6 @@ class LoginCliHandler {
     final env = values['env'];
 
     final mode = values['mode'] ?? 'full';
-    final rawSpeed = values['speed'];
-    final rawDelayMs = values['delay-ms'] != null
-        ? int.tryParse(values['delay-ms']!)
-        : null;
-    final speedPreset = SpeedPreset.parse(rawSpeed);
-    final executionSpeed = ExecutionSpeed(
-      preset: speedPreset,
-      customDelay: rawDelayMs != null
-          ? Duration(milliseconds: rawDelayMs)
-          : null,
-    );
 
     if (loginId == null || loginId.trim().isEmpty) {
       stdout.write('Enter Login ID: ');
@@ -88,12 +76,8 @@ class LoginCliHandler {
 
       final runner = PenguinPosLoginRunner();
       final result = mode == 'single'
-          ? await runner.run(scenario, vmServiceUri: uri, speed: executionSpeed)
-          : await runner.runFullSequence(
-              scenario,
-              vmServiceUri: uri,
-              speed: executionSpeed,
-            );
+          ? await runner.run(scenario, vmServiceUri: uri)
+          : await runner.runFullSequence(scenario, vmServiceUri: uri);
 
       stdout.writeln(
         const JsonEncoder.withIndent('  ').convert(result.toJson()),

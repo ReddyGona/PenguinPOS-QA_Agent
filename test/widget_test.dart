@@ -90,6 +90,52 @@ void main() {
     },
   );
 
+  testWidgets('shows a launch preview for a validated login plan', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 820));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messages = <AiChatMessage>[];
+
+    await tester.pumpWidget(
+      StatefulBuilder(
+        builder: (context, setState) => MaterialApp(
+          home: Scaffold(
+            body: AiAssistantWorkspace(
+              modelConfigured: true,
+              running: false,
+              messages: messages,
+              onAddMessage: (message) => setState(() => messages.add(message)),
+              activityMessages: const <QaActivityMessage>[],
+              executionSteps: const <AiExecutionStep>[],
+              executionSuiteTitle: '',
+              executionProfileLabel: '',
+              onSend: (input, history, onEvent) async =>
+                  const AiAssistantResponse(
+                    message: 'Login plan ready.',
+                    state: AiPlanState.readyForConfirmation,
+                    plan: AiTestPlan(
+                      workflow: AiWorkflow.loginFullSequence,
+                      profileId: 'kpn-stage',
+                    ),
+                  ),
+              onRunPlan: (_) {},
+              onOpenSettings: () {},
+              onExitAiMode: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField), 'Run login test');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Final order allocation'), findsOneWidget);
+    expect(find.textContaining('Login · kpn-stage'), findsOneWidget);
+  });
+
   testWidgets(
     'shows full-screen QaSettingsScreen workspace with sidebar tabs and settings options',
     (tester) async {

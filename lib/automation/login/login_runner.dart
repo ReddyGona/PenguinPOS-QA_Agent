@@ -9,7 +9,6 @@ import 'package:penguin_pos_qa_agent/automation/login/blocks/validate_empty_cred
 import 'package:penguin_pos_qa_agent/automation/login/blocks/validate_invalid_credentials_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/verify_home_screen_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
-import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
 
 /// Encapsulates execution results for a login scenario run.
@@ -18,7 +17,6 @@ class LoginRunResult {
     required this.passed,
     required this.startedAt,
     required this.finishedAt,
-    this.speed = 'fast',
     this.scenariosExecuted = const <String>[],
     this.vmServiceUri,
     this.error,
@@ -30,7 +28,6 @@ class LoginRunResult {
   final bool passed;
   final DateTime startedAt;
   final DateTime finishedAt;
-  final String speed;
   final List<String> scenariosExecuted;
   final Uri? vmServiceUri;
   final String? error;
@@ -43,7 +40,6 @@ class LoginRunResult {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'passed': passed,
-    'speed': speed,
     'scenariosExecuted': scenariosExecuted,
     'wasAppClosedByUser': wasAppClosedByUser,
     'startedAt': startedAt.toUtc().toIso8601String(),
@@ -69,7 +65,6 @@ class PenguinPosLoginRunner {
   Future<LoginRunResult> runFullSequence(
     LoginScenario scenario, {
     required Uri vmServiceUri,
-    ExecutionSpeed speed = const ExecutionSpeed(),
     Duration timeout = const Duration(seconds: 45),
     Driver? driverEngine,
     TextInputMode mode = TextInputMode.driverDirect,
@@ -104,7 +99,6 @@ class PenguinPosLoginRunner {
       cleanupBlocks: [EnsureLoggedOutBlock()],
       vmServiceUri: vmServiceUri,
       driver: activeDriver,
-      speed: speed,
       timeout: timeout,
       onExecutionEvent: onExecutionEvent,
       onScenarioCompleted: onScenarioCompleted,
@@ -119,7 +113,6 @@ class PenguinPosLoginRunner {
       passed: res.passed,
       startedAt: res.startedAt,
       finishedAt: res.finishedAt,
-      speed: res.speed,
       scenariosExecuted: res.scenariosExecuted,
       vmServiceUri: res.vmServiceUri,
       error: res.error,
@@ -133,7 +126,6 @@ class PenguinPosLoginRunner {
   Future<LoginRunResult> run(
     LoginScenario scenario, {
     required Uri vmServiceUri,
-    ExecutionSpeed speed = const ExecutionSpeed(),
     Duration timeout = const Duration(seconds: 45),
     Driver? driverEngine,
     TextInputMode mode = TextInputMode.driverDirect,
@@ -153,7 +145,6 @@ class PenguinPosLoginRunner {
       cleanupBlocks: [EnsureLoggedOutBlock()],
       vmServiceUri: vmServiceUri,
       driver: activeDriver,
-      speed: speed,
       timeout: timeout,
       secretsToRedact: [
         scenario.loginId,
@@ -166,7 +157,6 @@ class PenguinPosLoginRunner {
       passed: res.passed,
       startedAt: res.startedAt,
       finishedAt: res.finishedAt,
-      speed: res.speed,
       scenariosExecuted: res.scenariosExecuted,
       vmServiceUri: res.vmServiceUri,
       error: res.error,

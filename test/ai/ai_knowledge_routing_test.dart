@@ -26,6 +26,63 @@ void main() {
   );
 
   test(
+    'answers Flutter testing knowledge without a model or execution plan',
+    () async {
+      final response =
+          await AiOrchestrator(
+            profiles: nonProductionProfiles,
+            provider: null,
+          ).respond(
+            input: 'Can Flutter Driver read BLoC state or inspect dialogs?',
+            history: <AiChatMessage>[],
+          );
+
+      expect(response.kind, AiAssistantResponseKind.knowledge);
+      expect(response.plan, isNull);
+      expect(response.knowledge!.title, 'Flutter QA testing knowledge');
+      expect(response.knowledge!.summary, contains('Flutter Driver cannot'));
+      expect(
+        response.knowledge!.sections.map((section) => section.title),
+        contains('BLoC'),
+      );
+      expect(
+        response.knowledge!.sources,
+        contains('https://pub.dev/packages/bloc_test'),
+      );
+    },
+  );
+
+  test('keeps explicit Flutter Driver login requests executable', () async {
+    final response =
+        await AiOrchestrator(
+          profiles: nonProductionProfiles,
+          provider: null,
+        ).respond(
+          input: '/login Flutter Driver /kpn-stage',
+          history: <AiChatMessage>[],
+        );
+
+    expect(response.kind, isNot(AiAssistantResponseKind.knowledge));
+    expect(response.plan?.workflow, AiWorkflow.loginFullSequence);
+    expect(response.plan?.profileId, 'kpn-stage');
+  });
+
+  test('keeps natural Flutter Driver login test requests executable', () async {
+    final response =
+        await AiOrchestrator(
+          profiles: nonProductionProfiles,
+          provider: null,
+        ).respond(
+          input: 'Run Flutter Driver login test in KPN STAGE',
+          history: <AiChatMessage>[],
+        );
+
+    expect(response.kind, isNot(AiAssistantResponseKind.knowledge));
+    expect(response.plan?.workflow, AiWorkflow.loginFullSequence);
+    expect(response.plan?.profileId, 'kpn-stage');
+  });
+
+  test(
     'scopes an above-flow follow-up to the prior knowledge answer',
     () async {
       final orchestrator = AiOrchestrator(

@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 
-import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/widgets/scenario_card.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/qa_panel.dart';
-import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/speed_selector_widget.dart';
 
 /// Screen dedicated to displaying and executing Login & Terminal test cases matching the design mockup.
 class LoginSuiteScreen extends StatefulWidget {
@@ -29,8 +27,6 @@ class LoginSuiteScreen extends StatefulWidget {
     required this.onPasswordChanged,
     required this.onRunSuite,
     required this.onStopSuite,
-    this.speed = ExecutionSpeed.oneX,
-    this.onSpeedChanged,
   });
 
   final TestSuiteItem suite;
@@ -52,8 +48,6 @@ class LoginSuiteScreen extends StatefulWidget {
   final ValueChanged<String> onPasswordChanged;
   final VoidCallback onRunSuite;
   final VoidCallback onStopSuite;
-  final ExecutionSpeed speed;
-  final ValueChanged<ExecutionSpeed>? onSpeedChanged;
 
   @override
   State<LoginSuiteScreen> createState() => _LoginSuiteScreenState();
@@ -115,15 +109,6 @@ class _LoginSuiteScreenState extends State<LoginSuiteScreen> {
               ],
             ),
           ),
-          if (widget.onSpeedChanged != null) ...[
-            SpeedSelectorWidget(
-              selected: widget.speed,
-              onChanged: widget.onSpeedChanged!,
-              enabled: !widget.running,
-              variant: SpeedSelectorVariant.segmented,
-            ),
-            const SizedBox(width: 12),
-          ],
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF155EEF),
