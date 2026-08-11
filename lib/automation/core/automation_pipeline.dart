@@ -23,7 +23,9 @@ class AutomationPipeline {
         context.emit(block.name, 'Executing step...');
       }
       await context.driver.clearSnackBars();
+      await context.telemetryCollector?.markStep(context.driver, block.id);
       await block.execute(context);
+      await context.telemetryCollector?.fetchNewTraces(context.driver);
       executedBlockNames.add(block.name);
       onScenarioCompleted?.call(block.name);
     }

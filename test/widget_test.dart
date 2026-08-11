@@ -43,7 +43,7 @@ void main() {
       expect(find.text('QA Assistant'), findsOneWidget);
       expect(find.text('Manual mode'), findsOneWidget);
       expect(find.text('Settings'), findsWidgets);
-      expect(find.text('Execution log'), findsOneWidget);
+    expect(find.text('Terminal'), findsOneWidget);
     },
   );
 
@@ -64,6 +64,7 @@ void main() {
               messages: messages,
               onAddMessage: (msg) => messages.add(msg),
               activityMessages: const <QaActivityMessage>[],
+              apiTraces: const [],
               executionSteps: const <AiExecutionStep>[],
               executionSuiteTitle: '',
               executionProfileLabel: '',
@@ -107,6 +108,7 @@ void main() {
               messages: messages,
               onAddMessage: (message) => setState(() => messages.add(message)),
               activityMessages: const <QaActivityMessage>[],
+              apiTraces: const [],
               executionSteps: const <AiExecutionStep>[],
               executionSuiteTitle: '',
               executionProfileLabel: '',
@@ -132,8 +134,9 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
-    expect(find.text('Final order allocation'), findsOneWidget);
-    expect(find.textContaining('Login · kpn-stage'), findsOneWidget);
+    expect(find.text('Login execution plan'), findsOneWidget);
+    expect(find.textContaining('Login & Terminal · kpn-stage'), findsOneWidget);
+    expect(find.text('Final order allocation'), findsNothing);
   });
 
   testWidgets(

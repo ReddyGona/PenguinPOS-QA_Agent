@@ -52,39 +52,28 @@ class AssistantTopBar extends StatelessWidget {
           ),
           const SizedBox(width: 12),
 
-          // Model Connection Status Dot & Tag
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF6F4F0),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFC7C9C4)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: modelConfigured
-                        ? const Color(0xFF16A34A)
-                        : const Color(0xFFD97706),
-                    shape: BoxShape.circle,
-                  ),
+          // A saved endpoint alone is not enough: only a successful model
+          // connection earns the green state. Local commands remain available.
+          if (modelConfigured)
+            _ModelStatusTag()
+          else
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB42318),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  modelConfigured ? 'Ollama / OpenAI' : 'Rule Planning Mode',
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF494C4A),
-                  ),
-                ),
-              ],
+                visualDensity: VisualDensity.compact,
+              ),
+              onPressed: onOpenSettings,
+              icon: const Icon(Icons.error_outline_rounded, size: 15),
+              label: const Text(
+                'Model not present',
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+              ),
             ),
-          ),
 
           const Spacer(),
 
@@ -125,4 +114,39 @@ class AssistantTopBar extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ModelStatusTag extends StatelessWidget {
+  const _ModelStatusTag();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF6F4F0),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFFC7C9C4)),
+    ),
+    child: const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: Color(0xFF16A34A),
+            shape: BoxShape.circle,
+          ),
+          child: SizedBox(width: 7, height: 7),
+        ),
+        SizedBox(width: 6),
+        Text(
+          'Ollama / OpenAI connected',
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w500,
+            color: Color(0xFF494C4A),
+          ),
+        ),
+      ],
+    ),
+  );
 }

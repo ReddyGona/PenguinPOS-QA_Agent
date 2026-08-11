@@ -1,15 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/ai/models/qa_gen_ui.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/ai_orchestrator.dart';
 import 'package:penguin_pos_qa_agent/ai/providers/openai_compatible_provider.dart';
 import 'package:penguin_pos_qa_agent/application/execution/preflight_service.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
-import 'package:penguin_pos_qa_agent/automation/order/order_metrics.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_event.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
 import 'package:penguin_pos_qa_agent/runtime/path_detector.dart';
@@ -17,6 +21,7 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/repository/qa_target_preferences_repository.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/qa_activity_panel.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/api_activity_panel.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/side_nav.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/login/login_suite_screen.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/order_suite_screen.dart';
@@ -65,6 +70,8 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
   bool get _hasActiveWork => _running || _aiPlanningWaiting;
   AiModelConfig _aiModelConfig = const AiModelConfig();
+  bool _aiModelConnected = false;
+  int _modelConnectionGeneration = 0;
 
   bool _running = false;
   bool _stopRequested = false;
@@ -75,8 +82,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   bool _wasAppClosedByUser = false;
   List<String> _scenariosCompletedSoFar = <String>[];
   OrderRunResult? _lastOrderRunResult;
-  bool? _lastLoginCleanupPassed;
-  String? _lastLoginCleanupDetail;
+  List<ApiTraceEvent> _apiTraces = const <ApiTraceEvent>[];
 
   // Layer 3: Live execution progress tracking for the AI workspace.
   final _executionSteps = <AiExecutionStep>[];
@@ -136,6 +142,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _preferencesLoaded = true;
       _showFirstRunSetupPrompt = !hasCompletedInitialSetup;
     });
+    unawaited(_refreshAiModelConnection(aiModelConfig));
     if (!hasCompletedInitialSetup) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _showFirstRunSetupPrompt) {
@@ -144,6 +151,29 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       });
     }
     _refreshDetectedPaths();
+  }
+
+  /// Connectivity is deliberately checked separately from saved settings: a
+  /// base URL and model name do not mean the server is running or reachable.
+  Future<void> _refreshAiModelConnection(AiModelConfig config) async {
+    final generation = ++_modelConnectionGeneration;
+    if (!config.isConfigured) {
+      if (mounted) setState(() => _aiModelConnected = false);
+      return;
+    }
+
+    try {
+      final apiKey = await _credentialVault.readAiApiKey();
+      await OpenAiCompatibleProvider(
+        config: config,
+        apiKey: apiKey,
+      ).listModels();
+      if (!mounted || generation != _modelConnectionGeneration) return;
+      setState(() => _aiModelConnected = true);
+    } catch (_) {
+      if (!mounted || generation != _modelConnectionGeneration) return;
+      setState(() => _aiModelConnected = false);
+    }
   }
 
   /// Path checks touch the local file system and must not delay the first AI
@@ -854,8 +884,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _running = true;
       _lastExecutionPassed = null;
       _lastExecutionDetails = null;
-      _lastLoginCleanupPassed = null;
-      _lastLoginCleanupDetail = null;
+      _apiTraces = const <ApiTraceEvent>[];
       _wasAppClosedByUser = false;
       _stopRequested = false;
       _scenariosCompletedSoFar = <String>[];
@@ -877,6 +906,11 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
     LaunchedPenguinPos? launched;
     final stopwatch = Stopwatch()..start();
+    final telemetryCollector = ApiTraceCollector(
+      onTracesCaptured: (traces) {
+        if (mounted) setState(() => _apiTraces = traces);
+      },
+    );
 
     try {
       launched = await PenguinPosAppLauncher().launch(
@@ -931,6 +965,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
             );
           },
           onExecutionEvent: _recordExecutionEvent,
+          telemetryCollector: telemetryCollector,
         );
 
         stopwatch.stop();
@@ -982,6 +1017,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
           vmServiceUri: launched.vmServiceUri,
           onExecutionEvent: _recordExecutionEvent,
           onScenarioCompleted: _recordCompletedScenario,
+          telemetryCollector: telemetryCollector,
         );
 
         stopwatch.stop();
@@ -989,8 +1025,6 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         setState(() {
           _lastExecutionDuration = stopwatch.elapsed;
           _lastExecutionPassed = result.passed;
-          _lastLoginCleanupPassed = result.cleanupPassed;
-          _lastLoginCleanupDetail = result.cleanupDetail;
           _wasAppClosedByUser = result.wasAppClosedByUser || _stopRequested;
           _scenariosCompletedSoFar = result.scenariosExecuted;
           _lastExecutionDetails = result.passed
@@ -1074,28 +1108,16 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
           final allScenariosPassed =
               _lastExecutionPassed! && scenarioResults.every((s) => s.passed);
-          final AiRichContent reportContent;
           final orderResult = _lastOrderRunResult;
-          if (_selectedSuiteId == 'order_checkout' && orderResult != null) {
-            reportContent = AiRichOrderReport(
-              suiteTitle: _executionSuiteTitle,
-              profileLabel: _executionProfileLabel,
+          final reportContent = AiRichGenUi(
+            document: _buildExecutionGenUi(
+              isOrder: _selectedSuiteId == 'order_checkout',
               passed: allScenariosPassed,
-              totalDurationMs: stopwatch.elapsedMilliseconds,
-              orders: _buildAiOrderResults(orderResult),
-              testChecks: scenarioResults,
-            );
-          } else {
-            reportContent = AiRichTestReport(
-              suiteTitle: _executionSuiteTitle,
-              profileLabel: _executionProfileLabel,
-              passed: allScenariosPassed,
-              totalDurationMs: stopwatch.elapsedMilliseconds,
+              durationMs: stopwatch.elapsedMilliseconds,
               scenarioResults: scenarioResults,
-              cleanupPassed: _lastLoginCleanupPassed,
-              cleanupDetail: _lastLoginCleanupDetail,
-            );
-          }
+              orderResult: orderResult,
+            ),
+          );
 
           final reportMessage = AiChatMessage(
             role: AiChatRole.assistant,
@@ -1135,35 +1157,84 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     }
   }
 
-  List<AiOrderResult> _buildAiOrderResults(OrderRunResult result) {
-    return List<AiOrderResult>.generate(result.ordersTarget, (index) {
-      final orderNumber = index + 1;
-      OrderLoopMetrics? metric;
-      for (final candidate in result.loopMetrics) {
-        if (candidate.loopIndex == orderNumber) {
-          metric = candidate;
-          break;
-        }
-      }
-      final items = _orderScenario.getItemsForIteration(orderNumber);
-      final itemSummary = items
-          .map((item) {
-            final type = item.isWeighed
-                ? 'weighed${item.weight == null ? '' : ' ${item.weight} kg'}'
-                : item.type.name;
-            return 'SKU ${item.skuCode} · $type · ${item.entryMode.name}';
-          })
-          .join('\n');
-      return AiOrderResult(
-        orderNumber: orderNumber,
-        itemSummary: itemSummary.isEmpty
-            ? 'No item details recorded'
-            : itemSummary,
-        passed: metric != null,
-        durationMs: metric?.durationMs ?? 0,
-        cashAmount: metric?.payableCash ?? 0,
-      );
+  QaGenUiDocument _buildExecutionGenUi({
+    required bool isOrder,
+    required bool passed,
+    required int durationMs,
+    required List<AiScenarioResult> scenarioResults,
+    required OrderRunResult? orderResult,
+  }) {
+    final apiEvents = _apiTraces
+        .map(
+          (trace) => <String, Object?>{
+            'method': trace.method,
+            'endpoint': trace.route,
+            'durationMs': trace.durationMs,
+            'transport': trace.transport.name == 'unknown'
+                ? 'http'
+                : trace.transport.name,
+            'mode': trace.mode.name == 'unknown'
+                ? (trace.transport.name == 'https' ? 'cloud' : 'local')
+                : trace.mode.name,
+            'result': trace.result.name,
+            if (trace.statusCode != null) 'statusCode': trace.statusCode,
+            'stepId': trace.stepId,
+            if (trace.timeoutBudgetMs > 0)
+              'timeoutBudgetMs': trace.timeoutBudgetMs,
+          },
+        )
+        .toList(growable: false);
+    final timeoutTraces = _apiTraces
+        .where((trace) => trace.result.name.endsWith('Timeout'))
+        .toList(growable: false);
+    final document = QaGenUiDocument.tryParse(<String, Object?>{
+      'components': <Object?>[
+        <String, Object?>{
+          'component': isOrder ? 'orderPlan' : 'loginPlan',
+          'title': isOrder ? 'Order execution' : 'Login & Terminal execution',
+          'workflowLabel': _executionSuiteTitle,
+          'profileLabel': _executionProfileLabel,
+          'summary': isOrder && orderResult != null
+              ? '${orderResult.ordersCompleted} of ${orderResult.ordersTarget} orders completed.'
+              : 'Login, terminal selection, home verification, and logout cleanup.',
+        },
+        <String, Object?>{
+          'component': 'stepTimeline',
+          'title': 'Execution timeline',
+          'steps': scenarioResults
+              .map(
+                (result) => <String, Object?>{
+                  'label': result.name,
+                  'status': result.passed ? 'passed' : 'failed',
+                  'durationMs': result.durationMs,
+                  if (result.detail != null) 'detail': result.detail,
+                },
+              )
+              .toList(growable: false),
+        },
+        if (apiEvents.isNotEmpty)
+          <String, Object?>{
+            'component': 'apiSequence',
+            'title': 'API sequence',
+            'events': apiEvents,
+          },
+        for (final trace in timeoutTraces)
+          <String, Object?>{
+            'component': 'timeoutNotice',
+            'title': '${trace.method} ${trace.route}',
+            'timeoutResult': trace.result.name,
+            'timeoutBudgetMs': trace.timeoutBudgetMs,
+          },
+        <String, Object?>{
+          'component': 'resultSummary',
+          'title': passed ? 'Suite passed' : 'Suite finished with failures',
+          'passed': passed,
+          'summary':
+              'Completed in ${durationMs < 1000 ? '${durationMs}ms' : '${(durationMs / 1000).toStringAsFixed(1)}s'}.',
+        },
+      ],
     });
+    return document!;
   }
 
   void _addMessage(String title, String body, QaActivityKind kind) {
@@ -1224,12 +1295,18 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     appRoot: _appRoot,
     onProfileSelected: _selectProfile,
     onProfilesUpdated: (profiles) => setState(() => _profiles = profiles),
-    onAiModelConfigUpdated: (config) => setState(() => _aiModelConfig = config),
+    onAiModelConfigUpdated: (config) {
+      setState(() {
+        _aiModelConfig = config;
+        _aiModelConnected = false;
+      });
+      unawaited(_refreshAiModelConnection(config));
+    },
     onClose: () => setState(() => _showSettingsScreen = false),
   );
 
   Widget _buildAssistantWorkspace() => AiAssistantWorkspace(
-    modelConfigured: _aiModelConfig.isConfigured,
+    modelConfigured: _aiModelConnected,
     running: _running,
     messages: _aiChatMessages,
     onAddMessage: (msg) {
@@ -1250,6 +1327,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       }
     },
     activityMessages: _messages,
+    apiTraces: _apiTraces,
     executionSteps: _executionSteps,
     executionSuiteTitle: _executionSuiteTitle,
     executionProfileLabel: _executionProfileLabel,
@@ -1291,7 +1369,16 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         width: 320,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(0, 20, 20, 20),
-          child: QaActivityPanel(messages: _messages),
+          child: Column(
+            children: <Widget>[
+              Expanded(child: QaActivityPanel(messages: _messages)),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 280,
+                child: ApiActivityPanel(traces: _apiTraces),
+              ),
+            ],
+          ),
         ),
       ),
     ],

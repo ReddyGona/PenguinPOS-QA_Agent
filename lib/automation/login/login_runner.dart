@@ -1,6 +1,7 @@
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pipeline_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pos_automation_contract.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/ensure_logged_out_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/perform_login_block.dart';
@@ -70,6 +71,7 @@ class PenguinPosLoginRunner {
     TextInputMode mode = TextInputMode.driverDirect,
     void Function(ExecutionEvent event)? onExecutionEvent,
     void Function(String scenarioName)? onScenarioCompleted,
+    ApiTraceCollector? telemetryCollector,
   }) async {
     final activeDriver = driverEngine ?? DriverEngine();
 
@@ -107,6 +109,7 @@ class PenguinPosLoginRunner {
         scenario.password,
         scenario.unlockPin,
       ],
+      telemetryCollector: telemetryCollector,
     );
 
     return LoginRunResult(
@@ -129,6 +132,7 @@ class PenguinPosLoginRunner {
     Duration timeout = const Duration(seconds: 45),
     Driver? driverEngine,
     TextInputMode mode = TextInputMode.driverDirect,
+    ApiTraceCollector? telemetryCollector,
   }) async {
     final activeDriver = driverEngine ?? DriverEngine();
 
@@ -151,6 +155,7 @@ class PenguinPosLoginRunner {
         scenario.password,
         scenario.unlockPin,
       ],
+      telemetryCollector: telemetryCollector,
     );
 
     return LoginRunResult(

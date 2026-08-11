@@ -53,7 +53,7 @@ class SlashCommandParser {
     if (workflow == null) {
       return const AiAssistantResponse(
         state: AiPlanState.needsInput,
-        message: 'Choose a workflow: `/login` or `/orders 3`.',
+        message: 'Choose a workflow: `/login`, `/order`, or `/orders 3`.',
         missingFields: <String>['workflow'],
       );
     }

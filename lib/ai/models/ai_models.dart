@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
+import 'package:penguin_pos_qa_agent/ai/models/qa_gen_ui.dart';
 
 /// Shared contracts between the assistant UI, planner, and model provider.
 ///
@@ -851,6 +852,15 @@ class AiRichPlanningSummary extends AiRichContent {
   /// Elapsed application work time. This is a UI convenience only; it is not
   /// a measure of hidden model reasoning.
   final int? elapsedMs;
+}
+
+/// Approved declarative UI content for live QA execution evidence in chat.
+/// The document is parsed and validated by [QaGenUiDocument.tryParse] before
+/// it reaches this model; it cannot contain arbitrary Flutter widgets.
+class AiRichGenUi extends AiRichContent {
+  const AiRichGenUi({required this.document});
+
+  final QaGenUiDocument document;
 }
 
 class AiScenarioResult {

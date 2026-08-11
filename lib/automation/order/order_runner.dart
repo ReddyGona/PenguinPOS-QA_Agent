@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:penguin_pos_qa_agent/automation/core/automation_pipeline.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
@@ -85,6 +86,7 @@ class PenguinPosOrderRunner {
     void Function(String scenarioName)? onScenarioCompleted,
     void Function(int completed, int total)? onBatchProgress,
     void Function(ExecutionEvent event)? onExecutionEvent,
+    ApiTraceCollector? telemetryCollector,
   }) async {
     final startedAt = DateTime.now();
     final engine = driverEngine ?? DriverEngine();
@@ -116,6 +118,7 @@ class PenguinPosOrderRunner {
         driver: engine,
         timeout: timeout,
         onEvent: onExecutionEvent,
+        telemetryCollector: telemetryCollector,
       );
 
       // Step 1 & 2: Initial App state probe (Order Screen, Home, Login)

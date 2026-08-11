@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_event.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_composer.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_log_drawer.dart';
@@ -20,6 +21,7 @@ class AiAssistantWorkspace extends StatefulWidget {
     required this.onAddMessage,
     this.onTruncateMessages,
     required this.activityMessages,
+    required this.apiTraces,
     required this.executionSteps,
     required this.executionSuiteTitle,
     required this.executionProfileLabel,
@@ -38,6 +40,7 @@ class AiAssistantWorkspace extends StatefulWidget {
   final ValueChanged<int>? onTruncateMessages;
   final ValueChanged<bool>? onPlanningStateChanged;
   final List<QaActivityMessage> activityMessages;
+  final List<ApiTraceEvent> apiTraces;
 
   /// Live execution progress steps pushed from the dashboard during test runs.
   final List<AiExecutionStep> executionSteps;
@@ -90,7 +93,8 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
 
   static const List<String> _knownSlashCommands = <String>[
     '/login',
-    '/orders 3',
+    '/order',
+    '/orders',
     '/settings',
     '/manual',
     '/kpn-dev',
@@ -263,6 +267,14 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
   }
 
   AiRichLaunchPreview _launchPreviewFor(AiTestPlan plan) {
+    if (!plan.isOrder) {
+      return AiRichLaunchPreview(
+        profileLabel: plan.profileId,
+        workflowLabel: 'Login & Terminal',
+        orders: const <AiOrderLaunchPreview>[],
+      );
+    }
+
     List<AiOrderItemRow> rowsFor(Iterable<OrderItem> items, int order) => items
         .map(
           (item) => AiOrderItemRow(
@@ -282,7 +294,7 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
 
     return AiRichLaunchPreview(
       profileLabel: plan.profileId,
-      workflowLabel: plan.isOrder ? 'Order & Cash Payment' : 'Login',
+      workflowLabel: 'Order & Cash Payment',
       orders: <AiOrderLaunchPreview>[
         for (var order = 1; order <= plan.ordersCount; order++)
           AiOrderLaunchPreview(
@@ -438,6 +450,7 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
         // Minimal Collapsed / Expandable Execution Log Drawer at Bottom
         AssistantLogDrawer(
           activityMessages: widget.activityMessages,
+          apiTraces: widget.apiTraces,
           expanded: _logExpanded,
           onToggleExpanded: () {
             setState(() => _logExpanded = !_logExpanded);

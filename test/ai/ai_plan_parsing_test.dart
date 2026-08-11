@@ -116,7 +116,7 @@ void main() {
   );
 
   test(
-    'routes a free-form per-order request through the configured model and validates its allocation',
+    'routes an explicit per-order request through the configured model and validates its allocation',
     () async {
       final provider = _RecordingModelProvider(
         jsonEncode(<String, Object?>{
@@ -170,6 +170,33 @@ void main() {
       expect(
         response.plan!.perIterationItems[3]!.single.skuCode,
         '10000003.739',
+      );
+    },
+  );
+
+  test(
+    'uses standard-item fallbacks before a configured model can reject them',
+    () async {
+      final provider = _RecordingModelProvider('not valid JSON');
+
+      final response =
+          await AiOrchestrator(
+            profiles: QaProfile.values,
+            provider: provider,
+          ).respond(
+            input: 'Punch one order in KPN DEV with SKU 22.',
+            history: const <AiChatMessage>[],
+          );
+
+      expect(provider.receivedMessages, isEmpty);
+      expect(response.canExecute, isTrue);
+      expect(response.plan!.profileId, 'kpn-dev');
+      expect(response.plan!.ordersCount, 1);
+      expect(response.plan!.items.single.skuCode, '22');
+      expect(response.plan!.items.single.type, SkuItemType.nonWeighed);
+      expect(
+        response.plan!.items.single.effectiveEntryMode,
+        ItemEntryMode.manualNumpad,
       );
     },
   );
@@ -431,6 +458,7 @@ void main() {
             messages: messages,
             onAddMessage: (msg) => messages.add(msg),
             activityMessages: const <QaActivityMessage>[],
+            apiTraces: const [],
             executionSteps: const <AiExecutionStep>[],
             executionSuiteTitle: '',
             executionProfileLabel: '',

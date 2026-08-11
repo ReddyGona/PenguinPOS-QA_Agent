@@ -3,6 +3,7 @@ import 'package:penguin_pos_qa_agent/automation/core/automation_pipeline.dart';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pipeline_run_result.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/core/secret_redactor.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
@@ -18,6 +19,7 @@ class PipelineRunner {
     void Function(ExecutionEvent event)? onExecutionEvent,
     void Function(String scenarioName)? onScenarioCompleted,
     List<String?> secretsToRedact = const <String?>[],
+    ApiTraceCollector? telemetryCollector,
   }) async {
     final startedAt = DateTime.now();
     final activeDriver = driver ?? DriverEngine();
@@ -25,6 +27,7 @@ class PipelineRunner {
       driver: activeDriver,
       timeout: timeout,
       onEvent: onExecutionEvent,
+      telemetryCollector: telemetryCollector,
     );
 
     final executed = <String>[];
