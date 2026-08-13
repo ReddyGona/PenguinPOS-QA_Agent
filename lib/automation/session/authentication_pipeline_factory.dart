@@ -6,6 +6,7 @@ import 'package:penguin_pos_qa_agent/automation/login/blocks/select_terminal_blo
 import 'package:penguin_pos_qa_agent/automation/login/blocks/verify_home_screen_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
+import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 
 /// Composite factory that probes live UI state and yields atomic setup blocks needed for authentication.
 abstract final class AuthenticationPipelineFactory {
@@ -17,9 +18,11 @@ abstract final class AuthenticationPipelineFactory {
     final activeState = await context.driver.waitForAnyKey([
       PenguinPosLoginKeys.loginId,
       PenguinPosLoginKeys.homeScreen,
+      PenguinPosOrderKeys.orderScreen,
     ], timeout: context.timeout);
 
-    if (activeState == PenguinPosLoginKeys.homeScreen) {
+    if (activeState == PenguinPosLoginKeys.homeScreen ||
+        activeState == PenguinPosOrderKeys.orderScreen) {
       // Already authenticated, no setup blocks needed
       return const <AutomationBlock>[];
     }

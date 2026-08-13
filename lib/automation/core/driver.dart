@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
+
 /// Defines supported text input strategies for UI testing.
 enum TextInputMode {
   /// Direct Flutter Driver text injection.
@@ -40,13 +42,11 @@ abstract interface class Driver {
   Future<void> waitFor(
     String key, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   });
 
   Future<void> waitForAbsent(
     String key, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   });
 
   Future<String> waitForAnyKey(
@@ -57,7 +57,6 @@ abstract interface class Driver {
   Future<void> waitForText(
     String text, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   });
 
   Future<bool> hasKey(
@@ -73,7 +72,6 @@ abstract interface class Driver {
   Future<void> enterText(
     String key,
     String text, {
-    Duration? delay,
     Duration timeout = const Duration(seconds: 2),
   });
 
@@ -82,7 +80,6 @@ abstract interface class Driver {
     String text, {
     String keyPrefix = 'login.qwerty',
     TextInputMode mode = TextInputMode.customQwertyPad,
-    Duration? delay,
   });
 
   Future<String?> tryGetText(
@@ -95,23 +92,37 @@ abstract interface class Driver {
     Duration timeout = const Duration(seconds: 45),
   });
 
-  Future<void> tap(String key, {Duration? delay});
+  Future<void> tap(String key);
 
-  Future<void> tapText(String text, {Duration? delay});
+  Future<void> tapText(String text);
 
   Future<bool> tryTapText(
     String text, {
     Duration timeout = const Duration(seconds: 3),
-    Duration? delay,
   });
 
   Future<bool> tryTapKey(
     String key, {
     Duration timeout = const Duration(seconds: 3),
-    Duration? delay,
   });
 
-  Future<void> stepPause(Duration delay);
+  /// Sends a custom text command message to the target app's Flutter Driver extension handler.
+  Future<String?> requestData(
+    String message, {
+    Duration timeout = const Duration(seconds: 5),
+  });
+
+  /// Instantly requests the target application to clear active SnackBars.
+  /// Returns `true` if acknowledged by the target app extension, `false` otherwise.
+  Future<bool> clearSnackBars();
+
+  /// Displays a QA status overlay in the target app.
+  ///
+  /// Returns `false` when the target does not expose the optional QA extension.
+  Future<bool> showQaTestNotice(QaTestNotice notice);
+
+  /// Clears the active QA status overlay, if the target supports it.
+  Future<bool> clearQaTestNotice();
 
   Future<void> close();
 }

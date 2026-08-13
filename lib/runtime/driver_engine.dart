@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_driver/flutter_driver.dart';
+import 'dart:convert';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pos_automation_contract.dart';
 
 /// Reusable wrapper for FlutterDriver connection, key, and text finder UI interactions.
 class DriverEngine implements Driver {
   FlutterDriver? _driver;
+  Timer? _qaNoticeDismissTimer;
 
   @override
   Future<FlutterDriver> connect(
@@ -27,7 +30,6 @@ class DriverEngine implements Driver {
   Future<void> waitFor(
     String key, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
@@ -37,7 +39,7 @@ class DriverEngine implements Driver {
     var probeCount = 0;
 
     debugPrint('[DriverEngine] waitFor("$key") started, timeout=$timeout');
-    while (DateTime.now().isBefore(deadline)) {
+    while (_driver != null && DateTime.now().isBefore(deadline)) {
       final remaining = deadline.difference(DateTime.now());
       if (remaining <= Duration.zero) break;
 
@@ -50,9 +52,6 @@ class DriverEngine implements Driver {
         debugPrint(
           '[DriverEngine] waitFor("$key") FOUND after $probeCount probes',
         );
-        if (delay != null && delay > Duration.zero) {
-          await Future<void>.delayed(delay);
-        }
         return;
       }
     }
@@ -67,7 +66,6 @@ class DriverEngine implements Driver {
   Future<void> waitForAbsent(
     String key, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
@@ -78,7 +76,7 @@ class DriverEngine implements Driver {
     debugPrint(
       '[DriverEngine] waitForAbsent("$key") started, timeout=$timeout',
     );
-    while (DateTime.now().isBefore(deadline)) {
+    while (_driver != null && DateTime.now().isBefore(deadline)) {
       final remaining = deadline.difference(DateTime.now());
       if (remaining <= Duration.zero) break;
 
@@ -90,9 +88,6 @@ class DriverEngine implements Driver {
         debugPrint(
           '[DriverEngine] waitForAbsent("$key") CLEARED (widget absent)',
         );
-        if (delay != null && delay > Duration.zero) {
-          await Future<void>.delayed(delay);
-        }
         return;
       }
     }
@@ -127,7 +122,7 @@ class DriverEngine implements Driver {
       '[DriverEngine] waitForAnyKey(${candidates.join(", ")}) '
       'started, timeout=$timeout',
     );
-    while (DateTime.now().isBefore(deadline)) {
+    while (_driver != null && DateTime.now().isBefore(deadline)) {
       cycleCount++;
       for (final key in candidates) {
         final remaining = deadline.difference(DateTime.now());
@@ -160,14 +155,10 @@ class DriverEngine implements Driver {
   Future<void> waitForText(
     String text, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
     await driver.waitFor(find.text(text), timeout: timeout);
-    if (delay != null && delay > Duration.zero) {
-      await Future<void>.delayed(delay);
-    }
   }
 
   @override
@@ -204,20 +195,13 @@ class DriverEngine implements Driver {
   Future<void> enterText(
     String key,
     String text, {
-    Duration? delay,
     Duration timeout = const Duration(seconds: 2),
   }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
     debugPrint('[DriverEngine] enterText("$key", ${text.length} chars)');
     await driver.tap(find.byValueKey(key), timeout: timeout);
-    if (delay != null && delay > Duration.zero) {
-      await Future<void>.delayed(delay);
-    }
     await driver.enterText(text, timeout: timeout);
-    if (delay != null && delay > Duration.zero) {
-      await Future<void>.delayed(delay);
-    }
   }
 
   @override
@@ -226,18 +210,17 @@ class DriverEngine implements Driver {
     String text, {
     String keyPrefix = 'login.qwerty',
     TextInputMode mode = TextInputMode.driverDirect,
-    Duration? delay,
   }) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
 
     if (mode == TextInputMode.driverDirect) {
-      await enterText(targetInputKey, text, delay: delay);
+      await enterText(targetInputKey, text);
       return;
     }
 
     // 1. Focus target input field for custom virtual keyboards
-    await tap(targetInputKey, delay: delay);
+    await tap(targetInputKey);
 
     // Clear existing text field content before virtual key entry
     await driver.enterText('');
@@ -260,19 +243,18 @@ class DriverEngine implements Driver {
         final isUpper = RegExp(r'^[A-Z]$').hasMatch(char);
 
         if (isUpper && !isShiftActive) {
-          await tap(PosAutomationContract.qwertyShift(keyPrefix), delay: delay);
+          await tap(PosAutomationContract.qwertyShift(keyPrefix));
           isShiftActive = true;
         } else if (!isUpper && isShiftActive) {
-          await tap(PosAutomationContract.qwertyShift(keyPrefix), delay: delay);
+          await tap(PosAutomationContract.qwertyShift(keyPrefix));
           isShiftActive = false;
         }
 
         if (char == ' ') {
-          await tap(PosAutomationContract.qwertySpace(keyPrefix), delay: delay);
+          await tap(PosAutomationContract.qwertySpace(keyPrefix));
         } else {
           await tap(
             PosAutomationContract.qwertyKey(keyPrefix, char.toLowerCase()),
-            delay: delay,
           );
         }
       } else if (mode == TextInputMode.customNumPad) {
@@ -282,16 +264,13 @@ class DriverEngine implements Driver {
             reason: 'CustomNumPad layout cannot represent character at index',
           );
         }
-        await tap(
-          PosAutomationContract.numpadDigit(keyPrefix, char),
-          delay: delay,
-        );
+        await tap(PosAutomationContract.numpadDigit(keyPrefix, char));
       }
     }
 
     // Ensure shift state is left off
     if (isShiftActive) {
-      await tap(PosAutomationContract.qwertyShift(keyPrefix), delay: delay);
+      await tap(PosAutomationContract.qwertyShift(keyPrefix));
     }
   }
 
@@ -325,49 +304,36 @@ class DriverEngine implements Driver {
     return driver.getText(find.byValueKey(key), timeout: timeout);
   }
 
-  Future<void> enterTextDirect(String text, {Duration? delay}) async {
+  Future<void> enterTextDirect(String text) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
     await driver.enterText(text);
-    if (delay != null && delay > Duration.zero) {
-      await Future<void>.delayed(delay);
-    }
   }
 
   @override
-  Future<void> tap(String key, {Duration? delay}) async {
+  Future<void> tap(String key) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
     await driver.tap(find.byValueKey(key));
-    if (delay != null && delay > Duration.zero) {
-      await Future<void>.delayed(delay);
-    }
   }
 
   @override
-  Future<void> tapText(String text, {Duration? delay}) async {
+  Future<void> tapText(String text) async {
     final driver = _driver;
     if (driver == null) throw StateError('Driver is not connected');
     await driver.tap(find.text(text));
-    if (delay != null && delay > Duration.zero) {
-      await Future<void>.delayed(delay);
-    }
   }
 
   @override
   Future<bool> tryTapText(
     String text, {
     Duration timeout = const Duration(seconds: 3),
-    Duration? delay,
   }) async {
     final driver = _driver;
     if (driver == null) return false;
     try {
       await driver.waitFor(find.text(text), timeout: timeout);
       await driver.tap(find.text(text));
-      if (delay != null && delay > Duration.zero) {
-        await Future<void>.delayed(delay);
-      }
       return true;
     } catch (_) {
       return false;
@@ -378,16 +344,12 @@ class DriverEngine implements Driver {
   Future<bool> tryTapKey(
     String key, {
     Duration timeout = const Duration(seconds: 3),
-    Duration? delay,
   }) async {
     final driver = _driver;
     if (driver == null) return false;
     try {
       await driver.waitFor(find.byValueKey(key), timeout: timeout);
       await driver.tap(find.byValueKey(key));
-      if (delay != null && delay > Duration.zero) {
-        await Future<void>.delayed(delay);
-      }
       return true;
     } catch (_) {
       return false;
@@ -395,17 +357,94 @@ class DriverEngine implements Driver {
   }
 
   @override
-  Future<void> stepPause(Duration delay) async {
-    if (delay > Duration.zero) {
-      await Future<void>.delayed(delay);
+  Future<String?> requestData(
+    String message, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final driver = _driver;
+    if (driver == null) return null;
+    final start = DateTime.now();
+    try {
+      final res = await driver.requestData(message, timeout: timeout);
+      final durationMs = DateTime.now().difference(start).inMilliseconds;
+      debugPrint('[DriverEngine] requestData completed in ${durationMs}ms');
+      return res;
+    } catch (_) {
+      final durationMs = DateTime.now().difference(start).inMilliseconds;
+      debugPrint('[DriverEngine] requestData failed after ${durationMs}ms');
+      return null;
     }
   }
 
   @override
+  Future<bool> clearSnackBars() async {
+    final res = await requestData('clear_snackbars');
+    final isAcknowledged = res == 'cleared' || res == 'snackbars_cleared';
+    if (!isAcknowledged) {
+      debugPrint(
+        '[DriverEngine] clearSnackBars unacknowledged or extension unsupported (status="${res == null
+            ? 'null'
+            : res.contains('No requestData')
+            ? 'unsupported'
+            : 'unrecognized'}")',
+      );
+    }
+    return isAcknowledged;
+  }
+
+  @override
+  Future<bool> showQaTestNotice(QaTestNotice notice) async {
+    _qaNoticeDismissTimer?.cancel();
+    final response = await requestData(
+      jsonEncode(notice.toJson()),
+      // A notice must never consume the automation step timeout when the
+      // optional target extension is unavailable.
+      timeout: const Duration(milliseconds: 700),
+    );
+    final acknowledged = response == 'shown' || response == 'notice_shown';
+    if (acknowledged) {
+      // Notices are progress affordances, not modal gates. Never let one
+      // prevent the next automation decision from reaching the target UI.
+      _qaNoticeDismissTimer = Timer(const Duration(milliseconds: 700), () {
+        unawaited(clearQaTestNotice());
+      });
+    }
+    if (!acknowledged) {
+      debugPrint(
+        '[DriverEngine] QA notice unacknowledged or extension unsupported',
+      );
+    }
+    return acknowledged;
+  }
+
+  @override
+  Future<bool> clearQaTestNotice() async {
+    _qaNoticeDismissTimer?.cancel();
+    _qaNoticeDismissTimer = null;
+    final response = await requestData(
+      'qa_notice_clear',
+      timeout: const Duration(milliseconds: 700),
+    );
+    final acknowledged = response == 'cleared' || response == 'notice_cleared';
+    if (!acknowledged) {
+      debugPrint(
+        '[DriverEngine] QA notice clear unacknowledged or extension unsupported',
+      );
+    }
+    return acknowledged;
+  }
+
+  @override
   Future<void> close() async {
-    try {
-      await _driver?.close();
-    } catch (_) {}
+    _qaNoticeDismissTimer?.cancel();
+    _qaNoticeDismissTimer = null;
+    // Invalidate the handle before awaiting FlutterDriver.close(). Any active
+    // polling loop will then stop on its next bounded probe instead of
+    // waiting for the full scenario timeout after PenguinPOS quits.
+    final driver = _driver;
     _driver = null;
+    try {
+      await driver?.close();
+    } catch (_) {}
   }
 }

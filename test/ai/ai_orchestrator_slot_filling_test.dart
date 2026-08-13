@@ -9,45 +9,46 @@ void main() {
       AiOrchestrator(profiles: QaProfile.values, provider: null);
 
   test(
-    'retains a non-secret order draft until its strategy is explicit',
+    'defaults an unambiguous shared SKU list across multiple orders',
     () async {
       final orchestrator = buildOrchestrator();
       final initial = await orchestrator.respond(
         input: 'place 2 orders with SKUs 22, 11 in kpn stage',
         history: const <AiChatMessage>[],
       );
-      expect(initial.pendingRequest, isNotNull);
-      expect(initial.missingFields, contains('itemStrategy'));
-      expect(initial.pendingRequest!.skuCodes, <String>['22', '11']);
-
-      final typed = await orchestrator.respond(
-        input: 'those are non-weighed',
-        history: const <AiChatMessage>[],
-        pendingRequest: initial.pendingRequest,
-      );
-      final manual = await orchestrator.respond(
-        input: 'manual entry',
-        history: const <AiChatMessage>[],
-        pendingRequest: typed.pendingRequest,
-      );
-      expect(manual.missingFields, contains('itemStrategy'));
-
-      final ready = await orchestrator.respond(
-        input: 'same items for both orders',
-        history: const <AiChatMessage>[],
-        pendingRequest: manual.pendingRequest,
-      );
-      expect(ready.canExecute, isTrue);
-      expect(ready.plan!.profileId, 'kpn-stage');
-      expect(ready.plan!.itemStrategy, AiItemStrategy.sameForAll);
+      expect(initial.canExecute, isTrue);
+      expect(initial.plan!.profileId, 'kpn-stage');
+      expect(initial.plan!.ordersCount, 2);
+      expect(initial.plan!.itemStrategy, AiItemStrategy.sameForAll);
+      expect(initial.plan!.items.map((item) => item.skuCode), <String>[
+        '22',
+        '11',
+      ]);
       expect(
-        ready.plan!.items.map((item) => item.type),
+        initial.plan!.items.map((item) => item.type),
         everyElement(SkuItemType.nonWeighed),
       );
       expect(
-        ready.plan!.items.map((item) => item.effectiveEntryMode),
+        initial.plan!.items.map((item) => item.effectiveEntryMode),
         everyElement(ItemEntryMode.manualNumpad),
       );
+    },
+  );
+
+  test(
+    'preserves duplicate SKU sequence in shared multi-order plans',
+    () async {
+      final response = await buildOrchestrator().respond(
+        input: 'punch 2 orders back to back in kpn dev with skus 22, 11, 22',
+        history: const <AiChatMessage>[],
+      );
+
+      expect(response.canExecute, isTrue);
+      expect(response.plan!.items.map((item) => item.skuCode), <String>[
+        '22',
+        '11',
+        '22',
+      ]);
     },
   );
 

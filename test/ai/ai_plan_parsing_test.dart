@@ -116,7 +116,7 @@ void main() {
   );
 
   test(
-    'routes a free-form per-order request through the configured model and validates its allocation',
+    'routes an explicit per-order request through the configured model and validates its allocation',
     () async {
       final provider = _RecordingModelProvider(
         jsonEncode(<String, Object?>{
@@ -173,6 +173,24 @@ void main() {
       );
     },
   );
+
+  test('routes standard-item requests through a configured model', () async {
+    final provider = _RecordingModelProvider('not valid JSON');
+
+    final response =
+        await AiOrchestrator(
+          profiles: QaProfile.values,
+          provider: provider,
+        ).respond(
+          input: 'Punch one order in KPN DEV with SKU 22.',
+          history: const <AiChatMessage>[],
+        );
+
+    expect(provider.receivedMessages, isEmpty);
+    expect(response.canExecute, isTrue);
+    expect(response.plan!.profileId, 'kpn-dev');
+    expect(response.plan!.ordersCount, 1);
+  });
 
   test(
     'blocks model plans with an out-of-range per-order allocation',
@@ -431,6 +449,7 @@ void main() {
             messages: messages,
             onAddMessage: (msg) => messages.add(msg),
             activityMessages: const <QaActivityMessage>[],
+            apiTraces: const [],
             executionSteps: const <AiExecutionStep>[],
             executionSuiteTitle: '',
             executionProfileLabel: '',

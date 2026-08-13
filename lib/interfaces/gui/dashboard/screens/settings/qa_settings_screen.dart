@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/ai/providers/openai_compatible_provider.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_credential_vault.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/repository/qa_target_preferences_repository.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/ai_models_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/credentials_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/profiles_settings_tab.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/qa_notices_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/settings_sidebar.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/support_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/system_paths_settings_tab.dart';
@@ -19,23 +21,27 @@ class QaSettingsScreen extends StatefulWidget {
     required this.profiles,
     required this.activeProfile,
     required this.aiModelConfig,
+    required this.noticeDisplayMode,
     required this.flutterPath,
     required this.appRoot,
     required this.onProfileSelected,
     required this.onProfilesUpdated,
     required this.onAiModelConfigUpdated,
+    required this.onNoticeDisplayModeUpdated,
     required this.onClose,
   });
 
   final List<QaProfile> profiles;
   final QaProfile activeProfile;
   final AiModelConfig aiModelConfig;
+  final QaTestNoticeDisplayMode noticeDisplayMode;
   final String flutterPath;
   final String appRoot;
 
   final ValueChanged<QaProfile> onProfileSelected;
   final ValueChanged<List<QaProfile>> onProfilesUpdated;
   final ValueChanged<AiModelConfig> onAiModelConfigUpdated;
+  final ValueChanged<QaTestNoticeDisplayMode> onNoticeDisplayModeUpdated;
   final VoidCallback onClose;
 
   @override
@@ -68,6 +74,7 @@ class _QaSettingsScreenState extends State<QaSettingsScreen> {
   final _apiKeyController = TextEditingController();
   bool _isCloud = false;
   bool _enableVerboseReasoning = false;
+  late QaTestNoticeDisplayMode _noticeDisplayMode;
   bool _testingConnection = false;
   String? _testConnectionStatus;
 
@@ -81,6 +88,7 @@ class _QaSettingsScreenState extends State<QaSettingsScreen> {
     _selectedProfile = widget.activeProfile;
     _isCloud = widget.aiModelConfig.isCloud;
     _enableVerboseReasoning = widget.aiModelConfig.enableVerboseReasoning;
+    _noticeDisplayMode = widget.noticeDisplayMode;
     _modelLabelController.text = widget.aiModelConfig.label;
     _baseUrlController.text = widget.aiModelConfig.baseUrl;
     _modelNameController.text = widget.aiModelConfig.model;
@@ -378,6 +386,7 @@ class _QaSettingsScreenState extends State<QaSettingsScreen> {
     SettingsTab.aiModels => AiModelsSettingsTab(
       isCloud: _isCloud,
       enableVerboseReasoning: _enableVerboseReasoning,
+      noticeDisplayMode: _noticeDisplayMode,
       modelLabelController: _modelLabelController,
       baseUrlController: _baseUrlController,
       modelNameController: _modelNameController,
@@ -388,8 +397,19 @@ class _QaSettingsScreenState extends State<QaSettingsScreen> {
       onVerboseReasoningToggle: (value) {
         setState(() => _enableVerboseReasoning = value);
       },
+      onNoticeDisplayModeChanged: (value) {
+        setState(() => _noticeDisplayMode = value);
+        widget.onNoticeDisplayModeUpdated(value);
+      },
       onTestConnection: _testAiConnection,
       onSaveAiModel: _saveAiModel,
+    ),
+    SettingsTab.qaNotices => QaNoticesSettingsTab(
+      displayMode: _noticeDisplayMode,
+      onChanged: (value) {
+        setState(() => _noticeDisplayMode = value);
+        widget.onNoticeDisplayModeUpdated(value);
+      },
     ),
     SettingsTab.systemPaths => SystemPathsSettingsTab(
       flutterPath: _flutterPath,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/settings_form_card.dart';
 
 /// Tab view for configuring local Ollama or OpenAI-compatible cloud model endpoints.
@@ -8,6 +9,7 @@ class AiModelsSettingsTab extends StatelessWidget {
     super.key,
     required this.isCloud,
     required this.enableVerboseReasoning,
+    required this.noticeDisplayMode,
     required this.modelLabelController,
     required this.baseUrlController,
     required this.modelNameController,
@@ -16,12 +18,14 @@ class AiModelsSettingsTab extends StatelessWidget {
     required this.testConnectionStatus,
     required this.onCloudToggle,
     required this.onVerboseReasoningToggle,
+    required this.onNoticeDisplayModeChanged,
     required this.onTestConnection,
     required this.onSaveAiModel,
   });
 
   final bool isCloud;
   final bool enableVerboseReasoning;
+  final QaTestNoticeDisplayMode noticeDisplayMode;
   final TextEditingController modelLabelController;
   final TextEditingController baseUrlController;
   final TextEditingController modelNameController;
@@ -30,6 +34,7 @@ class AiModelsSettingsTab extends StatelessWidget {
   final String? testConnectionStatus;
   final ValueChanged<bool> onCloudToggle;
   final ValueChanged<bool> onVerboseReasoningToggle;
+  final ValueChanged<QaTestNoticeDisplayMode> onNoticeDisplayModeChanged;
   final VoidCallback onTestConnection;
   final VoidCallback onSaveAiModel;
 
@@ -76,6 +81,27 @@ class AiModelsSettingsTab extends StatelessWidget {
               ),
               value: enableVerboseReasoning,
               onChanged: onVerboseReasoningToggle,
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<QaTestNoticeDisplayMode>(
+              initialValue: noticeDisplayMode,
+              decoration: const InputDecoration(
+                labelText: 'In-app test notices',
+                helperText:
+                    'Only when required shows essential milestones, expected warnings, and errors.',
+                border: OutlineInputBorder(),
+              ),
+              items: QaTestNoticeDisplayMode.values
+                  .map(
+                    (mode) => DropdownMenuItem<QaTestNoticeDisplayMode>(
+                      value: mode,
+                      child: Text(mode.label),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: (value) {
+                if (value != null) onNoticeDisplayModeChanged(value);
+              },
             ),
             const SizedBox(height: 14),
 

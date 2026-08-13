@@ -1,6 +1,5 @@
 import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
-import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/runtime/qa_session_manager.dart';
 import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_feature_tool.dart';
 import 'package:penguin_pos_qa_agent/interfaces/mcp/mcp_tool_definition.dart';
@@ -102,16 +101,6 @@ class LoginFeatureTool implements McpFeatureTool {
           'description':
               'Run empty login click, invalid credentials attempt, then valid login sequence.',
         },
-        'speed': <String, Object?>{
-          'type': 'string',
-          'enum': <String>['fast', 'medium', 'slow'],
-          'default': 'fast',
-          'description': 'Pacing speed for UI driver actions.',
-        },
-        'delay_ms': <String, Object?>{
-          'type': 'integer',
-          'description': 'Custom action delay duration in milliseconds.',
-        },
       },
     },
   );
@@ -125,17 +114,8 @@ class LoginFeatureTool implements McpFeatureTool {
       );
     }
 
-    final rawSpeed = arguments['speed'] as String?;
-    final rawDelayMs = arguments['delay_ms'] as int?;
     final checkAllScenarios =
         (arguments['check_all_scenarios'] as bool?) ?? true;
-    final speedPreset = SpeedPreset.parse(rawSpeed);
-    final executionSpeed = ExecutionSpeed(
-      preset: speedPreset,
-      customDelay: rawDelayMs != null
-          ? Duration(milliseconds: rawDelayMs)
-          : null,
-    );
 
     try {
       final session = _sessions.requireSession(
@@ -153,13 +133,8 @@ class LoginFeatureTool implements McpFeatureTool {
           ? await _runner.runFullSequence(
               scenario,
               vmServiceUri: session.vmServiceUri,
-              speed: executionSpeed,
             )
-          : await _runner.run(
-              scenario,
-              vmServiceUri: session.vmServiceUri,
-              speed: executionSpeed,
-            );
+          : await _runner.run(scenario, vmServiceUri: session.vmServiceUri);
 
       if (!result.passed) {
         return McpToolResult.failure(
@@ -168,7 +143,6 @@ class LoginFeatureTool implements McpFeatureTool {
       }
       return McpToolResult.success(<String, Object?>{
         'passed': true,
-        'speed': result.speed,
         'scenarios_executed': result.scenariosExecuted,
         'qa_session_id': session.id,
         'started_at': result.startedAt.toUtc().toIso8601String(),

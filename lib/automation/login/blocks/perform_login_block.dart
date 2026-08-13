@@ -1,6 +1,7 @@
 import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
 
@@ -23,34 +24,33 @@ class PerformLoginBlock implements AutomationBlock {
   String get name => 'Submit Credentials';
 
   @override
+  StepNotice? get notice => const StepNotice(
+    'Logging in',
+    'Submitting credentials.',
+    isMilestone: true,
+  );
+
+  @override
   Future<void> execute(ExecutionContext context) async {
+    await context.driver.clearSnackBars();
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
-      delay: context.speed.delay,
     );
     // Explicitly focus loginId field to reset form focus state
-    await context.driver.tap(
-      PenguinPosLoginKeys.loginId,
-      delay: context.speed.delay,
-    );
+    await context.driver.tap(PenguinPosLoginKeys.loginId);
     await context.driver.enterTextViaVirtualKeyboard(
       PenguinPosLoginKeys.loginId,
       scenario.loginId,
       keyPrefix: keyPrefix,
       mode: mode,
-      delay: context.speed.delay,
     );
     await context.driver.enterTextViaVirtualKeyboard(
       PenguinPosLoginKeys.password,
       scenario.password,
       keyPrefix: keyPrefix,
       mode: mode,
-      delay: context.speed.delay,
     );
-    await context.driver.tap(
-      PenguinPosLoginKeys.submit,
-      delay: context.speed.delay,
-    );
+    await context.driver.tap(PenguinPosLoginKeys.submit);
   }
 }

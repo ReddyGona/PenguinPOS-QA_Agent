@@ -41,49 +41,60 @@ class AssistantMessageList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final showExecution = executionSteps.isNotEmpty;
+    // Keep the safe AI activity trace visible while execution is running so
+    // the operator can see the decision that led to the launch alongside the
+    // live test progress. This is application status, never hidden reasoning.
     final showPlanning =
-        !showExecution && planningRunning && planningEvents.isNotEmpty;
-    final inlineStatusCount = showExecution || showPlanning ? 1 : 0;
-    return ListView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.only(top: 16, bottom: 24),
-      itemCount: messages.length + inlineStatusCount,
-      itemBuilder: (context, index) {
-        if (index == messages.length) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: showExecution
-                ? AssistantExecutionTracker(
-                    steps: executionSteps,
-                    suiteTitle: executionSuiteTitle,
-                    profileLabel: executionProfileLabel,
-                    running: executionRunning,
-                  )
-                : AssistantModelTrace(
-                    events: planningEvents,
-                    running: planningRunning,
-                  ),
-          );
-        }
-        final message = messages[index];
-        if (message.role == AiChatRole.user) {
-          return _UserMessageTile(
+        planningEvents.isNotEmpty && (planningRunning || showExecution);
+    final inlineStatusCount = (showPlanning ? 1 : 0) + (showExecution ? 1 : 0);
+    return ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+      child: ListView.builder(
+        controller: scrollController,
+        padding: const EdgeInsets.only(top: 16, bottom: 24),
+        itemCount: messages.length + inlineStatusCount,
+        itemBuilder: (context, index) {
+          if (showPlanning && index == messages.length) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: AssistantModelTrace(
+                events: planningEvents,
+                running: planningRunning,
+              ),
+            );
+          }
+          if (showExecution &&
+              index == messages.length + (showPlanning ? 1 : 0)) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: AssistantExecutionTracker(
+                steps: executionSteps,
+                suiteTitle: executionSuiteTitle,
+                profileLabel: executionProfileLabel,
+                running: executionRunning,
+              ),
+            );
+          }
+          final message = messages[index];
+          if (message.role == AiChatRole.user) {
+            return _UserMessageTile(
+              messageIndex: index,
+              message: message,
+              onEditAndRetrigger: onEditAndRetrigger,
+              onCopyText: onCopyText,
+            );
+          }
+
+          return _AssistantMessageTile(
             messageIndex: index,
             message: message,
-            onEditAndRetrigger: onEditAndRetrigger,
+            onRetrigger: onRetrigger,
             onCopyText: onCopyText,
+            onRunPlan: onRunPlan,
+            onOpenPlanInManualMode: onOpenPlanInManualMode,
           );
-        }
-
-        return _AssistantMessageTile(
-          messageIndex: index,
-          message: message,
-          onRetrigger: onRetrigger,
-          onCopyText: onCopyText,
-          onRunPlan: onRunPlan,
-          onOpenPlanInManualMode: onOpenPlanInManualMode,
-        );
-      },
+        },
+      ),
     );
   }
 }

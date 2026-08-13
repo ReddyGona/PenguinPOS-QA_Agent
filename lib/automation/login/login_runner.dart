@@ -1,6 +1,8 @@
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pipeline_runner.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pos_automation_contract.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/ensure_logged_out_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/perform_login_block.dart';
@@ -9,7 +11,6 @@ import 'package:penguin_pos_qa_agent/automation/login/blocks/validate_empty_cred
 import 'package:penguin_pos_qa_agent/automation/login/blocks/validate_invalid_credentials_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/verify_home_screen_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
-import 'package:penguin_pos_qa_agent/core/execution_speed.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
 
 /// Encapsulates execution results for a login scenario run.
@@ -18,19 +19,18 @@ class LoginRunResult {
     required this.passed,
     required this.startedAt,
     required this.finishedAt,
-    this.speed = 'fast',
     this.scenariosExecuted = const <String>[],
     this.vmServiceUri,
     this.error,
     this.cleanupPassed,
     this.cleanupDetail,
     this.wasAppClosedByUser = false,
+    this.metadata = const <String, Object?>{},
   });
 
   final bool passed;
   final DateTime startedAt;
   final DateTime finishedAt;
-  final String speed;
   final List<String> scenariosExecuted;
   final Uri? vmServiceUri;
   final String? error;
@@ -40,10 +40,10 @@ class LoginRunResult {
   final bool? cleanupPassed;
   final String? cleanupDetail;
   final bool wasAppClosedByUser;
+  final Map<String, Object?> metadata;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'passed': passed,
-    'speed': speed,
     'scenariosExecuted': scenariosExecuted,
     'wasAppClosedByUser': wasAppClosedByUser,
     'startedAt': startedAt.toUtc().toIso8601String(),
@@ -52,6 +52,7 @@ class LoginRunResult {
     if (error != null) 'error': error,
     if (cleanupPassed != null) 'cleanupPassed': cleanupPassed,
     if (cleanupDetail != null) 'cleanupDetail': cleanupDetail,
+    if (metadata.isNotEmpty) 'metadata': metadata,
   };
 }
 
@@ -69,12 +70,14 @@ class PenguinPosLoginRunner {
   Future<LoginRunResult> runFullSequence(
     LoginScenario scenario, {
     required Uri vmServiceUri,
-    ExecutionSpeed speed = const ExecutionSpeed(),
     Duration timeout = const Duration(seconds: 45),
     Driver? driverEngine,
     TextInputMode mode = TextInputMode.driverDirect,
     void Function(ExecutionEvent event)? onExecutionEvent,
     void Function(String scenarioName)? onScenarioCompleted,
+    ApiTraceCollector? telemetryCollector,
+    QaTestNoticeDisplayMode noticeDisplayMode =
+        QaTestNoticeDisplayMode.warningsAndErrors,
   }) async {
     final activeDriver = driverEngine ?? DriverEngine();
 
@@ -104,7 +107,6 @@ class PenguinPosLoginRunner {
       cleanupBlocks: [EnsureLoggedOutBlock()],
       vmServiceUri: vmServiceUri,
       driver: activeDriver,
-      speed: speed,
       timeout: timeout,
       onExecutionEvent: onExecutionEvent,
       onScenarioCompleted: onScenarioCompleted,
@@ -113,19 +115,21 @@ class PenguinPosLoginRunner {
         scenario.password,
         scenario.unlockPin,
       ],
+      telemetryCollector: telemetryCollector,
+      noticeDisplayMode: noticeDisplayMode,
     );
 
     return LoginRunResult(
       passed: res.passed,
       startedAt: res.startedAt,
       finishedAt: res.finishedAt,
-      speed: res.speed,
       scenariosExecuted: res.scenariosExecuted,
       vmServiceUri: res.vmServiceUri,
       error: res.error,
       cleanupPassed: res.cleanupPassed,
       cleanupDetail: res.cleanupDetail,
       wasAppClosedByUser: res.wasAppClosedByUser,
+      metadata: res.metadata,
     );
   }
 
@@ -133,10 +137,12 @@ class PenguinPosLoginRunner {
   Future<LoginRunResult> run(
     LoginScenario scenario, {
     required Uri vmServiceUri,
-    ExecutionSpeed speed = const ExecutionSpeed(),
     Duration timeout = const Duration(seconds: 45),
     Driver? driverEngine,
     TextInputMode mode = TextInputMode.driverDirect,
+    ApiTraceCollector? telemetryCollector,
+    QaTestNoticeDisplayMode noticeDisplayMode =
+        QaTestNoticeDisplayMode.milestonesAndErrors,
   }) async {
     final activeDriver = driverEngine ?? DriverEngine();
 
@@ -153,26 +159,27 @@ class PenguinPosLoginRunner {
       cleanupBlocks: [EnsureLoggedOutBlock()],
       vmServiceUri: vmServiceUri,
       driver: activeDriver,
-      speed: speed,
       timeout: timeout,
       secretsToRedact: [
         scenario.loginId,
         scenario.password,
         scenario.unlockPin,
       ],
+      telemetryCollector: telemetryCollector,
+      noticeDisplayMode: noticeDisplayMode,
     );
 
     return LoginRunResult(
       passed: res.passed,
       startedAt: res.startedAt,
       finishedAt: res.finishedAt,
-      speed: res.speed,
       scenariosExecuted: res.scenariosExecuted,
       vmServiceUri: res.vmServiceUri,
       error: res.error,
       cleanupPassed: res.cleanupPassed,
       cleanupDetail: res.cleanupDetail,
       wasAppClosedByUser: res.wasAppClosedByUser,
+      metadata: res.metadata,
     );
   }
 }

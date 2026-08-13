@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/ai_assistant_workspace.dart';
@@ -43,7 +44,7 @@ void main() {
       expect(find.text('QA Assistant'), findsOneWidget);
       expect(find.text('Manual mode'), findsOneWidget);
       expect(find.text('Settings'), findsWidgets);
-      expect(find.text('Execution log'), findsOneWidget);
+      expect(find.text('Terminal'), findsOneWidget);
     },
   );
 
@@ -64,6 +65,7 @@ void main() {
               messages: messages,
               onAddMessage: (msg) => messages.add(msg),
               activityMessages: const <QaActivityMessage>[],
+              apiTraces: const [],
               executionSteps: const <AiExecutionStep>[],
               executionSuiteTitle: '',
               executionProfileLabel: '',
@@ -90,6 +92,54 @@ void main() {
     },
   );
 
+  testWidgets('shows a launch preview for a validated login plan', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 820));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messages = <AiChatMessage>[];
+
+    await tester.pumpWidget(
+      StatefulBuilder(
+        builder: (context, setState) => MaterialApp(
+          home: Scaffold(
+            body: AiAssistantWorkspace(
+              modelConfigured: true,
+              running: false,
+              messages: messages,
+              onAddMessage: (message) => setState(() => messages.add(message)),
+              activityMessages: const <QaActivityMessage>[],
+              apiTraces: const [],
+              executionSteps: const <AiExecutionStep>[],
+              executionSuiteTitle: '',
+              executionProfileLabel: '',
+              onSend: (input, history, onEvent) async =>
+                  const AiAssistantResponse(
+                    message: 'Login plan ready.',
+                    state: AiPlanState.readyForConfirmation,
+                    plan: AiTestPlan(
+                      workflow: AiWorkflow.loginFullSequence,
+                      profileId: 'kpn-stage',
+                    ),
+                  ),
+              onRunPlan: (_) {},
+              onOpenSettings: () {},
+              onExitAiMode: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField), 'Run login test');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Login execution plan'), findsOneWidget);
+    expect(find.textContaining('Login & Terminal · kpn-stage'), findsOneWidget);
+    expect(find.text('Final order allocation'), findsNothing);
+  });
+
   testWidgets(
     'shows full-screen QaSettingsScreen workspace with sidebar tabs and settings options',
     (tester) async {
@@ -103,11 +153,14 @@ void main() {
             profiles: QaProfile.values,
             activeProfile: QaProfile.values.first,
             aiModelConfig: const AiModelConfig(),
+            noticeDisplayMode: QaTestNoticeDisplayMode.warningsAndErrors,
+
             flutterPath: 'flutter',
             appRoot: '/Users/reddygona/Documents/PenguinPOS/penguin_pos',
             onProfileSelected: (_) {},
             onProfilesUpdated: (_) {},
             onAiModelConfigUpdated: (_) {},
+            onNoticeDisplayModeUpdated: (_) {},
             onClose: () => closeCalled = true,
           ),
         ),
@@ -118,6 +171,7 @@ void main() {
       expect(find.text('Credentials & PINs'), findsOneWidget);
       expect(find.text('Profiles & Environments'), findsOneWidget);
       expect(find.text('AI Models & Endpoint'), findsOneWidget);
+      expect(find.text('QA Notices'), findsOneWidget);
       expect(find.text('System & Engine Paths'), findsOneWidget);
       expect(find.text('Support & System Info'), findsOneWidget);
 
@@ -126,6 +180,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Add New Profile'), findsOneWidget);
+
+      await tester.tap(find.text('QA Notices'));
+      await tester.pumpAndSettle();
+      expect(find.text('Notice display mode'), findsOneWidget);
+      expect(find.text('Warnings & errors'), findsOneWidget);
 
       // Tap Done button to exit Settings back to workspace
       await tester.tap(find.text('Done'));

@@ -11,6 +11,7 @@ class AssistantLaunchPreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isOrderPreview = preview.orders.isNotEmpty;
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -23,16 +24,20 @@ class AssistantLaunchPreviewCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            const Row(
+            Row(
               children: <Widget>[
                 Icon(
-                  Icons.fact_check_rounded,
+                  isOrderPreview
+                      ? Icons.fact_check_rounded
+                      : Icons.login_rounded,
                   size: 18,
                   color: AssistantUiTokens.success,
                 ),
                 SizedBox(width: 8),
                 Text(
-                  'Final order allocation',
+                  isOrderPreview
+                      ? 'Final order allocation'
+                      : 'Login execution plan',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
@@ -52,17 +57,44 @@ class AssistantLaunchPreviewCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 14),
-            for (
-              var index = 0;
-              index < preview.orders.length;
-              index++
-            ) ...<Widget>[
-              _OrderAllocationPanel(
-                order: preview.orders[index],
-                accent: _accentFor(index),
-              ),
-              if (index < preview.orders.length - 1) const SizedBox(height: 10),
-            ],
+            if (!isOrderPreview) ...<Widget>[
+              for (final step in preview.steps)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 7),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Icon(
+                        Icons.arrow_right_rounded,
+                        size: 16,
+                        color: AssistantUiTokens.accent,
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          step,
+                          style: const TextStyle(
+                            color: AssistantUiTokens.mutedText,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ] else
+              for (
+                var index = 0;
+                index < preview.orders.length;
+                index++
+              ) ...<Widget>[
+                _OrderAllocationPanel(
+                  order: preview.orders[index],
+                  accent: _accentFor(index),
+                ),
+                if (index < preview.orders.length - 1)
+                  const SizedBox(height: 10),
+              ],
           ],
         ),
       ),

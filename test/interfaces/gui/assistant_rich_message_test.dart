@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/ai/models/qa_gen_ui.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_message_list.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/widgets/assistant_rich_message.dart';
 
@@ -203,5 +204,70 @@ void main() {
     expect(find.text('Valid Login Flow'), findsOneWidget);
     expect(find.text('DECISION'), findsOneWidget);
     expect(find.byType(CustomPaint), findsAtLeastNWidgets(1));
+  });
+
+  testWidgets('renders a validated API sequence with transport and mode', (
+    tester,
+  ) async {
+    final document = QaGenUiDocument.tryParse(<String, Object?>{
+      'components': <Object?>[
+        <String, Object?>{
+          'component': 'apiSequence',
+          'title': 'Order API activity',
+          'events': <Object?>[
+            <String, Object?>{
+              'method': 'GET',
+              'endpoint': '/catalog/items/22',
+              'durationMs': 184,
+              'transport': 'http',
+              'mode': 'local',
+              'result': 'success',
+              'statusCode': 200,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(document, isNotNull);
+    await tester.pumpWidget(host(AiRichGenUi(document: document!)));
+
+    expect(find.text('Order API activity'), findsOneWidget);
+    expect(find.text('GET'), findsOneWidget);
+    expect(find.text('/catalog/items/22'), findsOneWidget);
+    expect(find.text('184ms'), findsOneWidget);
+    expect(find.text('HTTP · Local · 200'), findsOneWidget);
+  });
+
+  test('rejects unknown components and unsafe endpoint values', () {
+    expect(
+      QaGenUiDocument.tryParse(<String, Object?>{
+        'components': <Object?>[
+          <String, Object?>{'component': 'arbitraryWidget', 'title': 'Nope'},
+        ],
+      }),
+      isNull,
+    );
+    expect(
+      QaGenUiDocument.tryParse(<String, Object?>{
+        'components': <Object?>[
+          <String, Object?>{
+            'component': 'apiSequence',
+            'title': 'API activity',
+            'events': <Object?>[
+              <String, Object?>{
+                'method': 'GET',
+                'endpoint': 'https://host/path?token=secret',
+                'durationMs': 2,
+                'transport': 'https',
+                'mode': 'cloud',
+                'result': 'success',
+              },
+            ],
+          },
+        ],
+      }),
+      isNotNull,
+    );
   });
 }

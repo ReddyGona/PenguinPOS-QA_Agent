@@ -61,7 +61,6 @@ class StatefulFakeDriverEngine extends DriverEngine {
   Future<void> waitFor(
     String key, {
     Duration timeout = const Duration(seconds: 45),
-    Duration? delay,
   }) async {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
@@ -74,7 +73,7 @@ class StatefulFakeDriverEngine extends DriverEngine {
   }
 
   @override
-  Future<void> tap(String key, {Duration? delay}) async {
+  Future<void> tap(String key) async {
     tappedKeys?.add(key);
     onTapKey?.call(key, _availableKeys);
   }
@@ -83,7 +82,6 @@ class StatefulFakeDriverEngine extends DriverEngine {
   Future<bool> tryTapKey(
     String key, {
     Duration timeout = const Duration(seconds: 2),
-    Duration? delay,
   }) async {
     if (_availableKeys.contains(key)) {
       tappedKeys?.add(key);
@@ -97,7 +95,6 @@ class StatefulFakeDriverEngine extends DriverEngine {
   Future<void> enterText(
     String key,
     String text, {
-    Duration? delay,
     Duration timeout = const Duration(seconds: 2),
   }) async {
     tappedKeys?.add('enterText:$key:$text');

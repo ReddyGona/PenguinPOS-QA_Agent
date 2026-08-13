@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
 
-enum SettingsTab { credentials, profiles, aiModels, systemPaths, support }
+enum SettingsTab {
+  credentials,
+  profiles,
+  aiModels,
+  qaNotices,
+  systemPaths,
+  support,
+}
 
 /// Left navigation sidebar for QaSettingsScreen.
 class SettingsSidebar extends StatelessWidget {
@@ -38,6 +45,12 @@ class SettingsSidebar extends StatelessWidget {
             icon: Icons.auto_awesome_outlined,
             label: 'AI Models & Endpoint',
             onTap: () => onSelectTab(SettingsTab.aiModels),
+          ),
+          _SidebarItem(
+            active: activeTab == SettingsTab.qaNotices,
+            icon: Icons.notifications_active_outlined,
+            label: 'QA Notices',
+            onTap: () => onSelectTab(SettingsTab.qaNotices),
           ),
           _SidebarItem(
             active: activeTab == SettingsTab.systemPaths,
