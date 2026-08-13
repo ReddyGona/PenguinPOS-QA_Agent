@@ -1,6 +1,7 @@
 import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_metrics.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_run_state.dart';
@@ -17,6 +18,13 @@ class EnterOrderItemsBlock implements AutomationBlock {
 
   @override
   String get name => 'SKU & Weighed Item Entry';
+
+  @override
+  StepNotice? get notice => const StepNotice(
+    'Adding SKUs',
+    'Entering order items.',
+    isMilestone: true,
+  );
 
   @override
   Future<void> execute(ExecutionContext context) async {

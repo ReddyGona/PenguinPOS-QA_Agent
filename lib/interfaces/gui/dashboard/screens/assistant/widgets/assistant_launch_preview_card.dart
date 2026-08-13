@@ -57,15 +57,32 @@ class AssistantLaunchPreviewCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 14),
-            if (!isOrderPreview)
-              const Text(
-                'The suite will validate login, select the terminal, verify the home screen, and log out.',
-                style: TextStyle(
-                  color: AssistantUiTokens.mutedText,
-                  fontSize: 11.5,
+            if (!isOrderPreview) ...<Widget>[
+              for (final step in preview.steps)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 7),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Icon(
+                        Icons.arrow_right_rounded,
+                        size: 16,
+                        color: AssistantUiTokens.accent,
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          step,
+                          style: const TextStyle(
+                            color: AssistantUiTokens.mutedText,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              )
-            else
+            ] else
               for (
                 var index = 0;
                 index < preview.orders.length;

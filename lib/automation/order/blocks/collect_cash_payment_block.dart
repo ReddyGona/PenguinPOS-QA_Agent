@@ -1,5 +1,6 @@
 import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/order/cash_round_off.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_metrics.dart';
@@ -16,6 +17,10 @@ class CollectCashPaymentBlock implements AutomationBlock {
 
   @override
   String get name => 'Cash Payment & Round-Off Tender';
+
+  @override
+  StepNotice? get notice =>
+      const StepNotice('Collecting payment', 'Applying the cash tender.');
 
   @override
   Future<void> execute(ExecutionContext context) async {

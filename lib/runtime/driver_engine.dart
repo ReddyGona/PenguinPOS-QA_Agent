@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_driver/flutter_driver.dart';
+import 'dart:convert';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pos_automation_contract.dart';
 
 /// Reusable wrapper for FlutterDriver connection, key, and text finder UI interactions.
 class DriverEngine implements Driver {
   FlutterDriver? _driver;
+  Timer? _qaNoticeDismissTimer;
 
   @override
   Future<FlutterDriver> connect(
@@ -36,7 +39,7 @@ class DriverEngine implements Driver {
     var probeCount = 0;
 
     debugPrint('[DriverEngine] waitFor("$key") started, timeout=$timeout');
-    while (DateTime.now().isBefore(deadline)) {
+    while (_driver != null && DateTime.now().isBefore(deadline)) {
       final remaining = deadline.difference(DateTime.now());
       if (remaining <= Duration.zero) break;
 
@@ -73,7 +76,7 @@ class DriverEngine implements Driver {
     debugPrint(
       '[DriverEngine] waitForAbsent("$key") started, timeout=$timeout',
     );
-    while (DateTime.now().isBefore(deadline)) {
+    while (_driver != null && DateTime.now().isBefore(deadline)) {
       final remaining = deadline.difference(DateTime.now());
       if (remaining <= Duration.zero) break;
 
@@ -119,7 +122,7 @@ class DriverEngine implements Driver {
       '[DriverEngine] waitForAnyKey(${candidates.join(", ")}) '
       'started, timeout=$timeout',
     );
-    while (DateTime.now().isBefore(deadline)) {
+    while (_driver != null && DateTime.now().isBefore(deadline)) {
       cycleCount++;
       for (final key in candidates) {
         final remaining = deadline.difference(DateTime.now());
@@ -364,15 +367,11 @@ class DriverEngine implements Driver {
     try {
       final res = await driver.requestData(message, timeout: timeout);
       final durationMs = DateTime.now().difference(start).inMilliseconds;
-      debugPrint(
-        '[DriverEngine] requestData("$message") completed in ${durationMs}ms',
-      );
+      debugPrint('[DriverEngine] requestData completed in ${durationMs}ms');
       return res;
     } catch (_) {
       final durationMs = DateTime.now().difference(start).inMilliseconds;
-      debugPrint(
-        '[DriverEngine] requestData("$message") failed after ${durationMs}ms',
-      );
+      debugPrint('[DriverEngine] requestData failed after ${durationMs}ms');
       return null;
     }
   }
@@ -394,10 +393,58 @@ class DriverEngine implements Driver {
   }
 
   @override
+  Future<bool> showQaTestNotice(QaTestNotice notice) async {
+    _qaNoticeDismissTimer?.cancel();
+    final response = await requestData(
+      jsonEncode(notice.toJson()),
+      // A notice must never consume the automation step timeout when the
+      // optional target extension is unavailable.
+      timeout: const Duration(milliseconds: 700),
+    );
+    final acknowledged = response == 'shown' || response == 'notice_shown';
+    if (acknowledged) {
+      // Notices are progress affordances, not modal gates. Never let one
+      // prevent the next automation decision from reaching the target UI.
+      _qaNoticeDismissTimer = Timer(const Duration(milliseconds: 700), () {
+        unawaited(clearQaTestNotice());
+      });
+    }
+    if (!acknowledged) {
+      debugPrint(
+        '[DriverEngine] QA notice unacknowledged or extension unsupported',
+      );
+    }
+    return acknowledged;
+  }
+
+  @override
+  Future<bool> clearQaTestNotice() async {
+    _qaNoticeDismissTimer?.cancel();
+    _qaNoticeDismissTimer = null;
+    final response = await requestData(
+      'qa_notice_clear',
+      timeout: const Duration(milliseconds: 700),
+    );
+    final acknowledged = response == 'cleared' || response == 'notice_cleared';
+    if (!acknowledged) {
+      debugPrint(
+        '[DriverEngine] QA notice clear unacknowledged or extension unsupported',
+      );
+    }
+    return acknowledged;
+  }
+
+  @override
   Future<void> close() async {
-    try {
-      await _driver?.close();
-    } catch (_) {}
+    _qaNoticeDismissTimer?.cancel();
+    _qaNoticeDismissTimer = null;
+    // Invalidate the handle before awaiting FlutterDriver.close(). Any active
+    // polling loop will then stop on its next bounded probe instead of
+    // waiting for the full scenario timeout after PenguinPOS quits.
+    final driver = _driver;
     _driver = null;
+    try {
+      await driver?.close();
+    } catch (_) {}
   }
 }

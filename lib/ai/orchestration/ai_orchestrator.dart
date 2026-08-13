@@ -57,15 +57,29 @@ class AiOrchestrator {
     if (_hasExplicitExecutionIntent(input)) {
       final slashResponse = _slashCommandParser.parse(input, profiles);
       if (slashResponse != null) {
-        return _validate(slashResponse, input: input, history: history);
+        final validated = _validate(
+          slashResponse,
+          input: input,
+          history: history,
+        );
+        if (validated.canExecute) {
+          _emitDirectDecisionEvents(onEvent);
+        }
+        return validated;
       }
 
-      final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
-        input,
-        profiles,
-      );
-      if (naturalLoginResponse != null) {
-        return _validate(naturalLoginResponse, input: input, history: history);
+      if (model == null) {
+        final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
+          input,
+          profiles,
+        );
+        if (naturalLoginResponse != null) {
+          return _validate(
+            naturalLoginResponse,
+            input: input,
+            history: history,
+          );
+        }
       }
     }
 
@@ -92,6 +106,32 @@ class AiOrchestrator {
       }
     }
 
+    // Fast path for unambiguous execution commands. The assistant still
+    // publishes live planning events, but does not make a clear login/order
+    // request wait on a remote model response that may only ask for
+    // clarification. Ambiguous requests continue to the model below.
+    if (model != null) {
+      final fastLogin = _validate(
+        _slashCommandParser.parseNaturalWorkflow(input, profiles) ??
+            const AiAssistantResponse(
+              message: '',
+              state: AiPlanState.needsInput,
+            ),
+        input: input,
+        history: history,
+      );
+      final fastOrder = _isComplexOrderRequest(input)
+          ? null
+          : _startOrderDraft(input);
+      final fastPlan = fastLogin.canExecute
+          ? fastLogin
+          : (fastOrder?.canExecute == true ? fastOrder : null);
+      if (fastPlan != null) {
+        _emitFastPlanEvents(onEvent);
+        return fastPlan;
+      }
+    }
+
     AiPendingRequest? lastPendingRequest;
     for (final message in history.reversed) {
       if (message.role == AiChatRole.assistant &&
@@ -111,17 +151,28 @@ class AiOrchestrator {
       profiles,
       pendingWorkflow: effectivePending?.workflow,
       pendingMissingFields: effectivePending?.missingFields,
+      pendingOrdersCount: effectivePending?.ordersCount ?? 1,
     );
     if (slashResponse != null) {
-      return _validate(slashResponse, input: input, history: history);
+      final validated = _validate(
+        slashResponse,
+        input: input,
+        history: history,
+      );
+      if (validated.canExecute) {
+        _emitDirectDecisionEvents(onEvent);
+      }
+      return validated;
     }
 
-    final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
-      input,
-      profiles,
-    );
-    if (naturalLoginResponse != null) {
-      return _validate(naturalLoginResponse, input: input, history: history);
+    if (model == null) {
+      final naturalLoginResponse = _slashCommandParser.parseNaturalWorkflow(
+        input,
+        profiles,
+      );
+      if (naturalLoginResponse != null) {
+        return _validate(naturalLoginResponse, input: input, history: history);
+      }
     }
 
     // Explicit order requests are parsed locally whether or not a model is
@@ -130,9 +181,7 @@ class AiOrchestrator {
     // remains scan-only; an explicitly weighed item still requires a weight.
     // This prevents a model outage or an overly cautious model from changing
     // the user's requested checkout plan.
-    final newOrderDraft = model == null || _isSimpleOrderRequest(input)
-        ? _startOrderDraft(input)
-        : null;
+    final newOrderDraft = model == null ? _startOrderDraft(input) : null;
     if (newOrderDraft != null) return newOrderDraft;
 
     if (model == null) {
@@ -225,6 +274,27 @@ class AiOrchestrator {
       );
       final validated = _validate(reconciled, input: input, history: history);
 
+      // Keep the model in the loop, but do not make an unambiguous command
+      // unusable just because the model returned a clarification. The local
+      // parser supplies the same guarded plan as a fast, deterministic
+      // fallback; the UI still receives the model's live planning events.
+      if (!validated.canExecute) {
+        final localLogin = _slashCommandParser.parseNaturalWorkflow(
+          input,
+          profiles,
+        );
+        if (localLogin != null) {
+          final fallback = _validate(
+            localLogin,
+            input: input,
+            history: history,
+          );
+          if (fallback.canExecute) return fallback;
+        }
+        final localOrder = _startOrderDraft(input);
+        if (localOrder?.canExecute == true) return localOrder!;
+      }
+
       // Phase 5: Complete
       onEvent?.call(
         const AiModelEvent(
@@ -256,6 +326,73 @@ class AiOrchestrator {
     }
   }
 
+  void _emitFastPlanEvents(AiModelEventCallback? onEvent) {
+    onEvent?.call(
+      const AiModelEvent(
+        kind: AiModelEventKind.status,
+        message: 'Parsing request…',
+        phase: AiPlanningPhase.parsing,
+        progress: 0.35,
+      ),
+    );
+    onEvent?.call(
+      const AiModelEvent(
+        kind: AiModelEventKind.status,
+        message: 'Manual checks passed: direct execution is allowed.',
+        phase: AiPlanningPhase.validating,
+        progress: 0.7,
+      ),
+    );
+    onEvent?.call(
+      const AiModelEvent(
+        kind: AiModelEventKind.status,
+        message: 'Decision: launching the validated test plan.',
+        phase: AiPlanningPhase.validating,
+        progress: 0.85,
+      ),
+    );
+    onEvent?.call(
+      const AiModelEvent(
+        kind: AiModelEventKind.status,
+        message: 'QA plan validated against configured guardrails.',
+        phase: AiPlanningPhase.complete,
+        progress: 1.0,
+      ),
+    );
+  }
+
+  void _emitDirectDecisionEvents(AiModelEventCallback? onEvent) {
+    onEvent?.call(
+      const AiModelEvent(
+        kind: AiModelEventKind.status,
+        message: 'Request recognized as a direct test command.',
+        phase: AiPlanningPhase.parsing,
+        progress: 0.35,
+      ),
+    );
+    onEvent?.call(
+      const AiModelEvent(
+        kind: AiModelEventKind.status,
+        message: 'Request checks passed: target and workflow are executable.',
+        phase: AiPlanningPhase.validating,
+        progress: 0.75,
+      ),
+    );
+    onEvent?.call(
+      const AiModelEvent(
+        kind: AiModelEventKind.status,
+        message: 'Decision: launching the requested test now.',
+        phase: AiPlanningPhase.complete,
+        progress: 1.0,
+      ),
+    );
+  }
+
+  static bool _isComplexOrderRequest(String input) => RegExp(
+    r'\b(?:separate|custom|per[-\s]?order|individual)\b|\border\s*\d+\b',
+    caseSensitive: false,
+  ).hasMatch(input);
+
   static bool _hasExplicitExecutionIntent(String input) {
     final normalized = input.toLowerCase();
     final isInformational = RegExp(
@@ -269,16 +406,6 @@ class AiOrchestrator {
     ).hasMatch(normalized);
     return !isInformational && (hasWorkflow || hasNaturalRequest);
   }
-
-  /// The local planner owns a single order or a clearly shared SKU list. An
-  /// explicit allocation ("order 1 … order 2", "separate", or "custom") has
-  /// more than one valid interpretation, so it remains model-validated when a
-  /// model is available. Offline mode continues to offer the existing draft
-  /// flow for those requests.
-  static bool _isSimpleOrderRequest(String input) => !RegExp(
-    r'\b(?:separate|custom|per[-\s]?order|individual)\b|\border\s*\d+\b',
-    caseSensitive: false,
-  ).hasMatch(input);
 
   /// Creates or completes a local order draft from unambiguous user-provided
   /// values. This protects SKU context from being lost between chat turns and
@@ -382,7 +509,9 @@ class AiOrchestrator {
 
     final strategy =
         _itemStrategyIn(input) ??
-        (skuCodes.length == 1 && ordersCount > 1
+        (ordersCount > 1 &&
+                skuCodes.isNotEmpty &&
+                !_hasExplicitPerOrderIntent(input)
             ? AiItemStrategy.sameForAll
             : null);
     return _orderDraftResponse(
@@ -409,7 +538,9 @@ class AiOrchestrator {
     final effectiveStrategy =
         _itemStrategyIn(input) ??
         current.itemStrategy ??
-        (effectiveSkus.length == 1 && effectiveOrdersCount > 1
+        (effectiveOrdersCount > 1 &&
+                effectiveSkus.isNotEmpty &&
+                !_hasExplicitPerOrderIntent(input)
             ? AiItemStrategy.sameForAll
             : null);
     return AiPendingRequest(
@@ -858,8 +989,16 @@ class AiOrchestrator {
       standardSkus.addAll(tokens);
     }
 
-    final result = <String>{...bizerbaMatches, ...standardSkus}.toList();
-    return result;
+    // SKU input is an ordered sequence, not a set. Preserve duplicates and
+    // relative order so `22, 11, 22` remains exactly that sequence. Remove
+    // only the duplicate capture of a Bizerba token (the Bizerba regex and
+    // generic SKU regex can both see the same barcode).
+    final remainingStandard = <String>[...standardSkus];
+    for (final bizerba in bizerbaMatches) {
+      final duplicateIndex = remainingStandard.indexOf(bizerba);
+      if (duplicateIndex >= 0) remainingStandard.removeAt(duplicateIndex);
+    }
+    return <String>[...bizerbaMatches, ...remainingStandard];
   }
 
   static final Map<String, int> _wordToNumber = <String, int>{
@@ -967,6 +1106,11 @@ class AiOrchestrator {
     }
     return null;
   }
+
+  bool _hasExplicitPerOrderIntent(String input) => RegExp(
+    r'\b(?:separate|split|one\s+per\s+order|per[-\s]?order|individual|different)\b',
+    caseSensitive: false,
+  ).hasMatch(input);
 
   AiAssistantResponse _validate(
     AiAssistantResponse response, {
@@ -1617,14 +1761,14 @@ QA catalogue (the only source of advertised test coverage): ${jsonEncode(catalog
 Order item types: 'nonWeighed' (standard unit items), 'weighed' (standard scale items), 'bizerba' (when the user explicitly names it OR supplies a barcode containing `W`, such as `10000001W3.709`). Entry modes: 'scan' and 'manual'. For a standard SKU whose type or entry mode is omitted, default to 'nonWeighed' and 'manual'. Order count must be 1 to 50.
 Return exactly one JSON object with: kind (plan|knowledge|clarification|blocked), message (string), state (needsInput|readyForConfirmation|unsupported), missingFields (string array), plan (optional object), knowledge (optional object).
 For explanations, test-case lists, profiles, help, and suggestions that do not explicitly ask to execute, return kind `knowledge`, state `needsInput`, no plan, and a knowledge object: {"title":string,"summary":string,"sections":[{"title":string,"body":string,"items":[string]}],"sources":[string],"diagrams":[{"title":string,"nodes":[{"label":string,"detail":string}]}]}. Diagrams must use this declarative node shape only; never return Mermaid, HTML, SVG, JavaScript, or executable markup. Never claim a knowledge response is executable. A production request must return kind `blocked`, state `unsupported`, and no plan.
-Use the exact profile `id` from Profiles for plan.profileId; never use a label or an alias. If an order lists multiple SKUs (e.g. "sku 22, 11"), include ALL specified SKUs as separate objects in that order's item array. Never drop or skip requested items. The plan object uses these exact shapes:
+Use the exact profile `id` from Profiles for plan.profileId; never use a label or an alias. If an order lists multiple SKUs (e.g. "sku 22, 11"), include ALL specified SKUs as separate objects in that order's item array, preserving exact input order and duplicate occurrences (for example, `22, 11, 22` must remain `22, 11, 22`). SKU sequences are authoritative user data: never deduplicate, sort, reorder, or skip them. The plan object uses these exact shapes:
 Single/shared-item order:
 {"message":"Plan ready.","state":"readyForConfirmation","missingFields":[],"plan":{"workflow":"orderCashPayment","profileId":"kpn-dev","ordersCount":1,"itemStrategy":"sameForAll","items":[{"skuCode":"22","type":"nonWeighed","entryMode":"manual"}],"perIterationItems":{}}}
 Multiple orders with multiple items (e.g. order 1 has sku 22 & 11; order 2 has bizerba item 10000001):
 {"message":"Plan ready.","state":"readyForConfirmation","missingFields":[],"plan":{"workflow":"orderCashPayment","profileId":"kpn-stage","ordersCount":2,"itemStrategy":"perOrder","items":[],"perIterationItems":{"1":[{"skuCode":"22","type":"nonWeighed","entryMode":"scan"},{"skuCode":"11","type":"nonWeighed","entryMode":"scan"}],"2":[{"skuCode":"10000001","type":"bizerba","weight":3.473,"entryMode":"scan"}]}}}
 `items` must always be an array of objects, never tuples. `perIterationItems` must always be an object keyed by order number strings, never an array. A weighed item requires a positive numeric `weight`. A Bizerba barcode containing `W` already encodes its weight: preserve the exact code, set type to `bizerba` and entryMode to `scan`, and do not request or add a separate weight.
 ${detectedBizerbaSkus.isEmpty ? '' : 'Authoritative barcode facts extracted from the current user request: ${jsonEncode(detectedBizerbaSkus)}. Preserve every code exactly. Each is type `bizerba`, entryMode `scan`, and has its weight embedded in the barcode.'}
-The JSON examples are schema examples only. Never infer or select SKU 22 (or any other SKU) from them. A user must supply each SKU. When the user supplies a standard SKU but omits item type or entry mode, set it to `nonWeighed` and `manual`. Never default an item to weighed or Bizerba; an explicitly weighed item needs a positive weight. Only reuse prior item details when the user explicitly says to repeat, reuse, or use the previous order. For login, request secure credentials if the user has not indicated they are configured. For multiple orders, ask whether SKUs are shared or per order when that allocation is not stated. Never mark a plan ready unless profile, workflow, and required order items are supplied.
+The JSON examples are schema examples only. Never infer or select SKU 22 (or any other SKU) from them. A user must supply each SKU. When the user supplies a standard SKU but omits item type or entry mode, set it to `nonWeighed` and `manual`. Never default an item to weighed or Bizerba; an explicitly weighed item needs a positive weight. Only reuse prior item details when the user explicitly says to repeat, reuse, or use the previous order. For login, request secure credentials if the user has not indicated they are configured. For multiple orders, default to repeating all supplied standard SKUs in every order when the user gives a shared SKU list and does not say separate, split, one per order, per-order, individual, or different. Ask for clarification only when the request explicitly indicates separate allocation or the SKU mapping is otherwise contradictory. Never mark a plan ready unless profile, workflow, and required order items are supplied.
 ''';
   }
 }

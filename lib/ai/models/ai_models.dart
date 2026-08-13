@@ -201,7 +201,9 @@ class AiTestPlan {
   const AiTestPlan({
     required this.workflow,
     required this.profileId,
+    this.repeatCount = 1,
     this.ordersCount = 1,
+    this.executionSteps = const <String>[],
     this.itemStrategy = AiItemStrategy.sameForAll,
     this.items = const <OrderItem>[],
     this.perIterationItems = const <int, List<OrderItem>>{},
@@ -209,7 +211,12 @@ class AiTestPlan {
 
   final AiWorkflow workflow;
   final String profileId;
+  final int repeatCount;
   final int ordersCount;
+
+  /// Ordered, user-visible steps produced by the planner. The UI must render
+  /// this list rather than maintaining a second hardcoded workflow description.
+  final List<String> executionSteps;
   final AiItemStrategy itemStrategy;
   final List<OrderItem> items;
   final Map<int, List<OrderItem>> perIterationItems;
@@ -227,7 +234,9 @@ class AiTestPlan {
   AiTestPlan copyWith({String? profileId}) => AiTestPlan(
     workflow: workflow,
     profileId: profileId ?? this.profileId,
+    repeatCount: repeatCount,
     ordersCount: ordersCount,
+    executionSteps: executionSteps,
     itemStrategy: itemStrategy,
     items: items,
     perIterationItems: perIterationItems,
@@ -236,7 +245,9 @@ class AiTestPlan {
   Map<String, Object?> toJson() => <String, Object?>{
     'workflow': workflow.name,
     'profileId': profileId,
+    'repeatCount': repeatCount,
     'ordersCount': ordersCount,
+    'executionSteps': executionSteps,
     'itemStrategy': itemStrategy.name,
     'items': items.map((item) => item.toJson()).toList(),
     'perIterationItems': perIterationItems.map(
@@ -261,7 +272,15 @@ class AiTestPlan {
         orElse: () => AiWorkflow.loginFullSequence,
       ),
       profileId: (json['profileId'] as String?)?.trim() ?? '',
+      repeatCount: ((json['repeatCount'] as num?)?.toInt() ?? 1).clamp(1, 50),
       ordersCount: ((json['ordersCount'] as num?)?.toInt() ?? 1).clamp(1, 50),
+      executionSteps: (json['executionSteps'] is List)
+          ? (json['executionSteps'] as List)
+                .whereType<String>()
+                .map((step) => step.trim())
+                .where((step) => step.isNotEmpty)
+                .toList(growable: false)
+          : const <String>[],
       itemStrategy: perIterationItems.isNotEmpty
           ? AiItemStrategy.perOrder
           : requestedStrategy,
@@ -731,11 +750,13 @@ class AiRichLaunchPreview extends AiRichContent {
     required this.profileLabel,
     required this.workflowLabel,
     required this.orders,
+    this.steps = const <String>[],
   });
 
   final String profileLabel;
   final String workflowLabel;
   final List<AiOrderLaunchPreview> orders;
+  final List<String> steps;
 
   int get totalItems =>
       orders.fold<int>(0, (count, order) => count + order.items.length);
@@ -869,12 +890,14 @@ class AiScenarioResult {
     required this.passed,
     required this.durationMs,
     this.detail,
+    this.children = const <AiScenarioResult>[],
   });
 
   final String name;
   final bool passed;
   final int durationMs;
   final String? detail;
+  final List<AiScenarioResult> children;
 }
 
 // ---------------------------------------------------------------------------

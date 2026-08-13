@@ -1,5 +1,6 @@
 import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 
@@ -12,6 +13,13 @@ class EnsureOrderScreenBlock implements AutomationBlock {
 
   @override
   String get name => 'Ensure Order Screen';
+
+  @override
+  StepNotice? get notice => const StepNotice(
+    'Starting order testing',
+    'Opening the order screen.',
+    isMilestone: true,
+  );
 
   @override
   Future<void> execute(ExecutionContext context) async {

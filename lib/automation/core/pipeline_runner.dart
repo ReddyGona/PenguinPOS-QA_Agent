@@ -2,8 +2,10 @@ import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/automation_pipeline.dart';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pipeline_run_result.dart';
 import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/telemetry_dispatcher.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/core/secret_redactor.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
@@ -20,14 +22,24 @@ class PipelineRunner {
     void Function(String scenarioName)? onScenarioCompleted,
     List<String?> secretsToRedact = const <String?>[],
     ApiTraceCollector? telemetryCollector,
+    QaTestNoticeDisplayMode noticeDisplayMode =
+        QaTestNoticeDisplayMode.warningsAndErrors,
   }) async {
     final startedAt = DateTime.now();
     final activeDriver = driver ?? DriverEngine();
+    final telemetryDispatcher = telemetryCollector == null
+        ? null
+        : TelemetryDispatcher(
+            driver: activeDriver,
+            collector: telemetryCollector,
+          );
     final context = ExecutionContext(
       driver: activeDriver,
       timeout: timeout,
       onEvent: onExecutionEvent,
       telemetryCollector: telemetryCollector,
+      telemetryDispatcher: telemetryDispatcher,
+      noticeDisplayMode: noticeDisplayMode,
     );
 
     final executed = <String>[];
@@ -54,6 +66,11 @@ class PipelineRunner {
         errorStr,
         level: ExecutionEventLevel.error,
       );
+      await context.showNotice(
+        QaTestNoticeSeverity.error,
+        'Test suite failed',
+        'Execution stopped. Check the QA Agent terminal for details.',
+      );
       wasAppClosed =
           errorStr.contains('Service has disappeared') ||
           errorStr.contains('112') ||
@@ -67,9 +84,13 @@ class PipelineRunner {
 
     if (cleanupBlocks.isNotEmpty) {
       try {
-        for (final block in cleanupBlocks) {
-          await block.execute(context);
-        }
+        // Run cleanup through the same pipeline wrapper so it is included in
+        // the background telemetry queue before the final flush.
+        await AutomationPipeline().execute(
+          cleanupBlocks,
+          context,
+          emitStepEvents: false,
+        );
         cleanupPassed = true;
         context.emit(
           'Cleanup Completed',
@@ -87,6 +108,14 @@ class PipelineRunner {
       }
     }
 
+    // Leave a failure notice available for the operator to read and dismiss.
+    // A subsequent successful run clears any stale notice during teardown.
+    if (isPassed) {
+      await activeDriver.clearQaTestNotice();
+    }
+    // The final barrier preserves complete metrics while the normal block path
+    // remains fire-and-forget. It must happen before the driver is closed.
+    await telemetryDispatcher?.flush();
     await activeDriver.close();
 
     return PipelineRunResult(
@@ -99,6 +128,7 @@ class PipelineRunner {
       cleanupPassed: cleanupPassed,
       cleanupDetail: cleanupDetail,
       wasAppClosedByUser: wasAppClosed,
+      metadata: Map<String, Object?>.unmodifiable(context.state),
     );
   }
 }

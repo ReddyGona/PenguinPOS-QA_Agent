@@ -1,5 +1,6 @@
 import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 
 /// Sequentially executes a series of [AutomationBlock]s using an active [ExecutionContext].
 /// Does not manage driver connection or teardown.
@@ -19,13 +20,37 @@ class AutomationPipeline {
     final executedBlockNames = <String>[];
 
     for (final block in blocks) {
+      final notice =
+          block.notice ?? StepNotice(block.name, 'Running ${block.name}.');
+      await context.showNotice(
+        QaTestNoticeSeverity.info,
+        notice.title,
+        notice.message,
+        isMilestone: notice.isMilestone,
+      );
       if (emitStepEvents) {
         context.emit(block.name, 'Executing step...');
       }
-      await context.driver.clearSnackBars();
-      await context.telemetryCollector?.markStep(context.driver, block.id);
-      await block.execute(context);
-      await context.telemetryCollector?.fetchNewTraces(context.driver);
+      try {
+        await context.driver.clearSnackBars();
+        final telemetryDispatcher = context.telemetryDispatcher;
+        if (telemetryDispatcher != null) {
+          telemetryDispatcher.captureStep(block.id);
+        } else {
+          await context.telemetryCollector?.markStep(context.driver, block.id);
+        }
+        await block.execute(context);
+        if (telemetryDispatcher == null) {
+          await context.telemetryCollector?.fetchNewTraces(context.driver);
+        }
+      } catch (_) {
+        await context.showNotice(
+          QaTestNoticeSeverity.error,
+          '${block.name} failed',
+          'The step could not be completed. Check the QA Agent terminal for details.',
+        );
+        rethrow;
+      }
       executedBlockNames.add(block.name);
       onScenarioCompleted?.call(block.name);
     }

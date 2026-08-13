@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -19,6 +20,7 @@ class QaTargetPreferencesRepository {
   static const _aiModeKey = 'qa.ai_mode.v1';
   static const _aiModelConfigKey = 'qa.ai_model_config.v1';
   static const _initialSetupCompleteKey = 'qa.initial_setup_complete.v1';
+  static const _noticeDisplayModeKey = 'qa.notice_display_mode.v1';
 
   Future<QaSshTarget> loadSshTarget() async {
     final preferences = await SharedPreferences.getInstance();
@@ -84,6 +86,20 @@ class QaTargetPreferencesRepository {
   Future<void> saveAiModeEnabled(bool enabled) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool(_aiModeKey, enabled);
+  }
+
+  Future<QaTestNoticeDisplayMode> loadNoticeDisplayMode() async {
+    final preferences = await SharedPreferences.getInstance();
+    final saved = preferences.getString(_noticeDisplayModeKey);
+    return QaTestNoticeDisplayMode.values.firstWhere(
+      (mode) => mode.name == saved,
+      orElse: () => QaTestNoticeDisplayMode.warningsAndErrors,
+    );
+  }
+
+  Future<void> saveNoticeDisplayMode(QaTestNoticeDisplayMode mode) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_noticeDisplayModeKey, mode.name);
   }
 
   Future<AiModelConfig> loadAiModelConfig() async {

@@ -3,6 +3,7 @@ import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pipeline_runner.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/ensure_logged_out_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/perform_login_block.dart';
 import 'package:penguin_pos_qa_agent/automation/login/blocks/select_terminal_block.dart';
@@ -16,6 +17,8 @@ class FakeDriverEngine implements Driver {
   final List<String> enteredTexts = [];
   bool isConnected = false;
   bool isClosed = false;
+  int clearQaTestNoticeCalls = 0;
+  final List<QaTestNotice> notices = [];
   String currentUiState = PenguinPosLoginKeys.loginId;
 
   @override
@@ -149,6 +152,18 @@ class FakeDriverEngine implements Driver {
   Future<bool> clearSnackBars() async => true;
 
   @override
+  Future<bool> showQaTestNotice(QaTestNotice notice) async {
+    notices.add(notice);
+    return true;
+  }
+
+  @override
+  Future<bool> clearQaTestNotice() async {
+    clearQaTestNoticeCalls++;
+    return true;
+  }
+
+  @override
   Future<void> close() async {
     isClosed = true;
   }
@@ -159,6 +174,8 @@ class FailingBlock implements AutomationBlock {
   String get id => 'failing_block';
   @override
   String get name => 'Failing Block';
+  @override
+  StepNotice? get notice => null;
 
   @override
   Future<void> execute(ExecutionContext context) async {
@@ -168,6 +185,23 @@ class FailingBlock implements AutomationBlock {
 
 void main() {
   group('PipelineRunner & Atomic Blocks Tests', () {
+    test('preserves the initial session decision across cleanup', () async {
+      final fakeDriver = FakeDriverEngine()
+        ..currentUiState = PenguinPosLoginKeys.loginId;
+      final context = ExecutionContext(driver: fakeDriver);
+      final block = EnsureLoggedOutBlock();
+
+      await block.execute(context);
+      fakeDriver.currentUiState = PenguinPosLoginKeys.homeScreen;
+      await block.execute(context);
+
+      expect(context.state['initial_screen'], PenguinPosLoginKeys.loginId);
+      expect(context.state['initial_session_state'], 'logged_out');
+      expect(context.state['initial_logout_required'], isFalse);
+      expect(context.state['cleanup_screen'], PenguinPosLoginKeys.homeScreen);
+      expect(context.state['cleanup_session_state'], 'logged_in');
+    });
+
     test(
       'PipelineRunner executes blocks sequentially and handles cleanup',
       () async {
@@ -215,6 +249,9 @@ void main() {
       expect(result.error, contains('[REDACTED]'));
       expect(result.error, isNot(contains('user_pass_123')));
       expect(fakeDriver.isClosed, isTrue);
+      expect(fakeDriver.notices, isNotEmpty);
+      expect(fakeDriver.notices.last.severity, QaTestNoticeSeverity.error);
+      expect(fakeDriver.clearQaTestNoticeCalls, isZero);
     });
 
     test(

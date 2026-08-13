@@ -25,6 +25,19 @@ void main() {
       );
     });
 
+    test('slash login preserves an explicit back-to-back repeat count', () {
+      final response = SlashCommandParser().parse(
+        'test /login in kpn dev back to back 2 times',
+        profiles,
+      );
+
+      expect(response, isNotNull);
+      expect(response!.state, AiPlanState.readyForConfirmation);
+      expect(response.plan!.workflow, AiWorkflow.loginFullSequence);
+      expect(response.plan!.repeatCount, 2);
+      expect(response.plan!.ordersCount, 2);
+    });
+
     test('unknown profile cannot produce a runnable plan', () {
       final response = SlashCommandParser().parse(
         '/unknown-dev /login',

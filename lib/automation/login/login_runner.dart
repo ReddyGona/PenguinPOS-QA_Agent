@@ -1,5 +1,6 @@
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pipeline_runner.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/core/pos_automation_contract.dart';
 import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
@@ -24,6 +25,7 @@ class LoginRunResult {
     this.cleanupPassed,
     this.cleanupDetail,
     this.wasAppClosedByUser = false,
+    this.metadata = const <String, Object?>{},
   });
 
   final bool passed;
@@ -38,6 +40,7 @@ class LoginRunResult {
   final bool? cleanupPassed;
   final String? cleanupDetail;
   final bool wasAppClosedByUser;
+  final Map<String, Object?> metadata;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'passed': passed,
@@ -49,6 +52,7 @@ class LoginRunResult {
     if (error != null) 'error': error,
     if (cleanupPassed != null) 'cleanupPassed': cleanupPassed,
     if (cleanupDetail != null) 'cleanupDetail': cleanupDetail,
+    if (metadata.isNotEmpty) 'metadata': metadata,
   };
 }
 
@@ -72,6 +76,8 @@ class PenguinPosLoginRunner {
     void Function(ExecutionEvent event)? onExecutionEvent,
     void Function(String scenarioName)? onScenarioCompleted,
     ApiTraceCollector? telemetryCollector,
+    QaTestNoticeDisplayMode noticeDisplayMode =
+        QaTestNoticeDisplayMode.warningsAndErrors,
   }) async {
     final activeDriver = driverEngine ?? DriverEngine();
 
@@ -110,6 +116,7 @@ class PenguinPosLoginRunner {
         scenario.unlockPin,
       ],
       telemetryCollector: telemetryCollector,
+      noticeDisplayMode: noticeDisplayMode,
     );
 
     return LoginRunResult(
@@ -122,6 +129,7 @@ class PenguinPosLoginRunner {
       cleanupPassed: res.cleanupPassed,
       cleanupDetail: res.cleanupDetail,
       wasAppClosedByUser: res.wasAppClosedByUser,
+      metadata: res.metadata,
     );
   }
 
@@ -133,6 +141,8 @@ class PenguinPosLoginRunner {
     Driver? driverEngine,
     TextInputMode mode = TextInputMode.driverDirect,
     ApiTraceCollector? telemetryCollector,
+    QaTestNoticeDisplayMode noticeDisplayMode =
+        QaTestNoticeDisplayMode.milestonesAndErrors,
   }) async {
     final activeDriver = driverEngine ?? DriverEngine();
 
@@ -156,6 +166,7 @@ class PenguinPosLoginRunner {
         scenario.unlockPin,
       ],
       telemetryCollector: telemetryCollector,
+      noticeDisplayMode: noticeDisplayMode,
     );
 
     return LoginRunResult(
@@ -168,6 +179,7 @@ class PenguinPosLoginRunner {
       cleanupPassed: res.cleanupPassed,
       cleanupDetail: res.cleanupDetail,
       wasAppClosedByUser: res.wasAppClosedByUser,
+      metadata: res.metadata,
     );
   }
 }

@@ -258,7 +258,8 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
       if (mounted) {
         setState(() {
           _waiting = false;
-          _modelEvents.clear();
+          // Retain the safe planning/decision trace while the validated plan
+          // executes. A new request clears it at the start of the next turn.
         });
         _scrollToBottom();
       }
@@ -272,6 +273,7 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
         profileLabel: plan.profileId,
         workflowLabel: 'Login & Terminal',
         orders: const <AiOrderLaunchPreview>[],
+        steps: plan.executionSteps,
       );
     }
 
@@ -317,7 +319,10 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
     if (event.kind == AiModelEventKind.reasoning) return;
     _modelEvents.add(event);
     setState(() {});
-    _scrollToBottom();
+    // Do not yank the operator to the bottom for every live status event.
+    // Keep the current reading position unless they were already following
+    // the latest conversation content.
+    _scrollToBottom(onlyIfNearBottom: true);
   }
 
   void _handleCopyText(String text) {
@@ -364,9 +369,15 @@ class _AiAssistantWorkspaceState extends State<AiAssistantWorkspace> {
     _send();
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool onlyIfNearBottom = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
+        if (onlyIfNearBottom &&
+            _scrollController.position.maxScrollExtent -
+                    _scrollController.position.pixels >
+                96) {
+          return;
+        }
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 250),

@@ -92,7 +92,7 @@ class _GenUiComponentCard extends StatelessWidget {
           ],
           if (component.steps.isNotEmpty) ...<Widget>[
             const SizedBox(height: 10),
-            for (final step in component.steps) _TimelineRow(step: step),
+            _TimelineChain(steps: component.steps),
           ],
           if (component.apiEvents.isNotEmpty) ...<Widget>[
             const SizedBox(height: 10),
@@ -128,6 +128,35 @@ class _GenUiComponentCard extends StatelessWidget {
       : const Color(0xFF2E7D32);
 }
 
+class _TimelineChain extends StatelessWidget {
+  const _TimelineChain({required this.steps});
+
+  final List<QaGenUiStep> steps;
+
+  @override
+  Widget build(BuildContext context) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SizedBox(
+            width: 20,
+            child: CustomPaint(painter: _DottedTreeLinePainter()),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                for (final step in steps) _TimelineRow(step: step),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TimelineRow extends StatelessWidget {
   const _TimelineRow({required this.step});
 
@@ -137,50 +166,96 @@ class _TimelineRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
         children: <Widget>[
-          Icon(
-            _statusIcon(step.status),
-            size: 16,
-            color: _statusColor(step.status),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(
+                _statusIcon(step.status),
+                size: 16,
+                color: _statusColor(step.status),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      step.label,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: Color(0xFF2C302E),
+                      ),
+                    ),
+                    if (step.detail != null)
+                      Text(
+                        step.detail!,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF787A76),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (step.durationMs != null)
                 Text(
-                  step.label,
+                  _elapsed(step.durationMs!),
                   style: const TextStyle(
-                    fontSize: 12.5,
-                    color: Color(0xFF2C302E),
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: Color(0xFF4B504C),
                   ),
                 ),
-                if (step.detail != null)
-                  Text(
-                    step.detail!,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF787A76),
+            ],
+          ),
+          if (step.children.isNotEmpty)
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  SizedBox(
+                    width: 24,
+                    child: CustomPaint(painter: _DottedTreeLinePainter()),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Column(
+                        children: [
+                          for (final child in step.children)
+                            _TimelineRow(step: child),
+                        ],
+                      ),
                     ),
                   ),
-              ],
-            ),
-          ),
-          if (step.durationMs != null)
-            Text(
-              _elapsed(step.durationMs!),
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 11,
-                color: Color(0xFF4B504C),
+                ],
               ),
             ),
         ],
       ),
     );
   }
+}
+
+class _DottedTreeLinePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFFB8C2BB)
+      ..strokeWidth = 1.4;
+    for (double y = 0; y < size.height; y += 6) {
+      canvas.drawLine(
+        Offset(size.width / 2, y),
+        Offset(size.width / 2, y + 2),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _ApiSequenceRow extends StatelessWidget {

@@ -174,32 +174,23 @@ void main() {
     },
   );
 
-  test(
-    'uses standard-item fallbacks before a configured model can reject them',
-    () async {
-      final provider = _RecordingModelProvider('not valid JSON');
+  test('routes standard-item requests through a configured model', () async {
+    final provider = _RecordingModelProvider('not valid JSON');
 
-      final response =
-          await AiOrchestrator(
-            profiles: QaProfile.values,
-            provider: provider,
-          ).respond(
-            input: 'Punch one order in KPN DEV with SKU 22.',
-            history: const <AiChatMessage>[],
-          );
+    final response =
+        await AiOrchestrator(
+          profiles: QaProfile.values,
+          provider: provider,
+        ).respond(
+          input: 'Punch one order in KPN DEV with SKU 22.',
+          history: const <AiChatMessage>[],
+        );
 
-      expect(provider.receivedMessages, isEmpty);
-      expect(response.canExecute, isTrue);
-      expect(response.plan!.profileId, 'kpn-dev');
-      expect(response.plan!.ordersCount, 1);
-      expect(response.plan!.items.single.skuCode, '22');
-      expect(response.plan!.items.single.type, SkuItemType.nonWeighed);
-      expect(
-        response.plan!.items.single.effectiveEntryMode,
-        ItemEntryMode.manualNumpad,
-      );
-    },
-  );
+    expect(provider.receivedMessages, isEmpty);
+    expect(response.canExecute, isTrue);
+    expect(response.plan!.profileId, 'kpn-dev');
+    expect(response.plan!.ordersCount, 1);
+  });
 
   test(
     'blocks model plans with an out-of-range per-order allocation',

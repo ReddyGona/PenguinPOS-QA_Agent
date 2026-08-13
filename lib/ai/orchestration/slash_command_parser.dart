@@ -8,6 +8,7 @@ class SlashCommandParser {
     List<QaProfile> profiles, {
     AiWorkflow? pendingWorkflow,
     List<String>? pendingMissingFields,
+    int pendingOrdersCount = 1,
   }) {
     final rawTokens = input
         .toLowerCase()
@@ -27,6 +28,9 @@ class SlashCommandParser {
         return _buildResponseForWorkflowAndProfile(
           pendingWorkflow,
           matchedProfile,
+          ordersCount: pendingWorkflow == AiWorkflow.loginFullSequence
+              ? pendingOrdersCount
+              : 1,
         );
       }
     }
@@ -38,6 +42,10 @@ class SlashCommandParser {
     final profile = findProfileInInput(input, profiles);
     AiWorkflow? workflow;
     var ordersCount = 1;
+    // Login repetitions use the same explicit count syntax as order commands:
+    // `/login in kpn dev back to back 2 times`. Keep this local so an
+    // unambiguous slash command does not need a model round-trip.
+    var loginRepeatCount = _repeatCountIn(input.toLowerCase());
 
     for (var index = 0; index < rawTokens.length; index++) {
       final token = rawTokens[index].replaceFirst('/', '');
@@ -48,6 +56,15 @@ class SlashCommandParser {
           ordersCount = int.tryParse(rawTokens[index + 1])?.clamp(1, 50) ?? 1;
         }
       }
+    }
+
+    // A bare `/login` remains one run; only an explicit repetition marker
+    // should increase the count.
+    if (!RegExp(
+      r'\b(?:repeat|back\s+to\s+back|run|test)?\s*\d+\s*(?:times?|x|iterations?|reps?)\b',
+      caseSensitive: false,
+    ).hasMatch(input)) {
+      loginRepeatCount = 1;
     }
 
     if (workflow == null) {
@@ -76,7 +93,9 @@ class SlashCommandParser {
     return _buildResponseForWorkflowAndProfile(
       workflow,
       profile,
-      ordersCount: ordersCount,
+      ordersCount: workflow == AiWorkflow.loginFullSequence
+          ? loginRepeatCount
+          : ordersCount,
     );
   }
 
@@ -116,7 +135,16 @@ class SlashCommandParser {
     return _buildResponseForWorkflowAndProfile(
       AiWorkflow.loginFullSequence,
       profile,
+      ordersCount: _repeatCountIn(normalized),
     );
+  }
+
+  int _repeatCountIn(String input) {
+    final match = RegExp(
+      r'\b(?:repeat|back\s+to\s+back|run|test)?\s*(\d+)\s*(?:times?|x|iterations?|reps?)\b',
+      caseSensitive: false,
+    ).firstMatch(input);
+    return ((int.tryParse(match?.group(1) ?? '') ?? 1).clamp(1, 50));
   }
 
   AiAssistantResponse _buildResponseForWorkflowAndProfile(
@@ -127,7 +155,18 @@ class SlashCommandParser {
     final plan = AiTestPlan(
       workflow: workflow,
       profileId: profile.id,
+      repeatCount: workflow == AiWorkflow.loginFullSequence ? ordersCount : 1,
       ordersCount: ordersCount,
+      executionSteps: workflow == AiWorkflow.loginFullSequence
+          ? const <String>[
+              'Splash Screen APIs',
+              'Check current login session',
+              'Log out if an existing session is detected',
+              'Run login validation and valid login flow',
+              'Select terminal and verify home screen',
+              'Log out and restore a clean session',
+            ]
+          : const <String>[],
     );
 
     if (workflow == AiWorkflow.loginFullSequence) {

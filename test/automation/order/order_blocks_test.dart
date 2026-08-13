@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/order/blocks/collect_cash_payment_block.dart';
 import 'package:penguin_pos_qa_agent/automation/order/blocks/complete_order_block.dart';
@@ -147,6 +148,12 @@ class FakeOrderDriver implements Driver {
 
   @override
   Future<bool> clearSnackBars() async => true;
+
+  @override
+  Future<bool> showQaTestNotice(QaTestNotice notice) async => true;
+
+  @override
+  Future<bool> clearQaTestNotice() async => true;
 }
 
 void main() {

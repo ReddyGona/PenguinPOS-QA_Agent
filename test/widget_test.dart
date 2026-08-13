@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/ai_assistant_workspace.dart';
@@ -43,7 +44,7 @@ void main() {
       expect(find.text('QA Assistant'), findsOneWidget);
       expect(find.text('Manual mode'), findsOneWidget);
       expect(find.text('Settings'), findsWidgets);
-    expect(find.text('Terminal'), findsOneWidget);
+      expect(find.text('Terminal'), findsOneWidget);
     },
   );
 
@@ -152,11 +153,14 @@ void main() {
             profiles: QaProfile.values,
             activeProfile: QaProfile.values.first,
             aiModelConfig: const AiModelConfig(),
+            noticeDisplayMode: QaTestNoticeDisplayMode.warningsAndErrors,
+
             flutterPath: 'flutter',
             appRoot: '/Users/reddygona/Documents/PenguinPOS/penguin_pos',
             onProfileSelected: (_) {},
             onProfilesUpdated: (_) {},
             onAiModelConfigUpdated: (_) {},
+            onNoticeDisplayModeUpdated: (_) {},
             onClose: () => closeCalled = true,
           ),
         ),
@@ -167,6 +171,7 @@ void main() {
       expect(find.text('Credentials & PINs'), findsOneWidget);
       expect(find.text('Profiles & Environments'), findsOneWidget);
       expect(find.text('AI Models & Endpoint'), findsOneWidget);
+      expect(find.text('QA Notices'), findsOneWidget);
       expect(find.text('System & Engine Paths'), findsOneWidget);
       expect(find.text('Support & System Info'), findsOneWidget);
 
@@ -175,6 +180,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Add New Profile'), findsOneWidget);
+
+      await tester.tap(find.text('QA Notices'));
+      await tester.pumpAndSettle();
+      expect(find.text('Notice display mode'), findsOneWidget);
+      expect(find.text('Warnings & errors'), findsOneWidget);
 
       // Tap Done button to exit Settings back to workspace
       await tester.tap(find.text('Done'));

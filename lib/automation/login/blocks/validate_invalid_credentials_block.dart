@@ -1,6 +1,7 @@
 import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 
 /// Tests authentication failure handling when invalid credentials are submitted.
@@ -18,6 +19,12 @@ class ValidateInvalidCredentialsBlock implements AutomationBlock {
 
   @override
   String get name => 'Auth Failure Handling';
+
+  @override
+  StepNotice? get notice => const StepNotice(
+    'Checking login',
+    'Submitting expected invalid credentials.',
+  );
 
   @override
   Future<void> execute(ExecutionContext context) async {
@@ -46,6 +53,11 @@ class ValidateInvalidCredentialsBlock implements AutomationBlock {
     await context.driver.waitFor(
       PenguinPosLoginKeys.loginId,
       timeout: context.timeout,
+    );
+    await context.showNotice(
+      QaTestNoticeSeverity.warning,
+      'Expected authentication failure',
+      'Invalid credentials were rejected as expected.',
     );
   }
 }

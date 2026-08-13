@@ -1,6 +1,8 @@
 import 'package:penguin_pos_qa_agent/automation/core/automation_block.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
+import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 
 /// Resets application session state back to Login screen.
 class EnsureLoggedOutBlock implements AutomationBlock {
@@ -11,13 +13,35 @@ class EnsureLoggedOutBlock implements AutomationBlock {
   String get name => 'Session Reset';
 
   @override
+  StepNotice? get notice => const StepNotice(
+    'Preparing login test',
+    'Resetting the session.',
+    isMilestone: true,
+  );
+
+  @override
   Future<void> execute(ExecutionContext context) async {
     final initialState = await context.driver.waitForAnyKey([
       PenguinPosLoginKeys.loginId,
       PenguinPosLoginKeys.homeScreen,
+      PenguinPosOrderKeys.orderScreen,
     ], timeout: context.timeout);
 
-    if (initialState == PenguinPosLoginKeys.loginId) {
+    final isInitialProbe = !context.state.containsKey('initial_screen');
+    final isLoginScreen = initialState == PenguinPosLoginKeys.loginId;
+    final sessionState = isLoginScreen ? 'logged_out' : 'logged_in';
+    if (isInitialProbe) {
+      // These fields describe launch state only. Cleanup invokes this block
+      // again after login and must never overwrite the original decision.
+      context.state['initial_screen'] = initialState;
+      context.state['initial_session_state'] = sessionState;
+      context.state['initial_logout_required'] = sessionState == 'logged_in';
+    } else {
+      context.state['cleanup_screen'] = initialState;
+      context.state['cleanup_session_state'] = sessionState;
+    }
+
+    if (isLoginScreen) {
       return;
     }
 

@@ -11,9 +11,11 @@ import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
+import 'package:penguin_pos_qa_agent/automation/order/order_metrics.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
 import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
 import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_event.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
 import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
 import 'package:penguin_pos_qa_agent/runtime/path_detector.dart';
@@ -70,19 +72,36 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
   bool get _hasActiveWork => _running || _aiPlanningWaiting;
   AiModelConfig _aiModelConfig = const AiModelConfig();
+  QaTestNoticeDisplayMode _noticeDisplayMode =
+      QaTestNoticeDisplayMode.warningsAndErrors;
+
   bool _aiModelConnected = false;
   int _modelConnectionGeneration = 0;
 
   bool _running = false;
   bool _stopRequested = false;
+  Future<void>? _activeAiExecution;
   LaunchedPenguinPos? _activeLaunch;
   Duration? _lastExecutionDuration;
   bool? _lastExecutionPassed;
+  bool? _lastCleanupPassed;
   String? _lastExecutionDetails;
   bool _wasAppClosedByUser = false;
+  Map<String, Object?> _lastLoginMetadata = const <String, Object?>{};
+  int _loginRepeatCount = 1;
   List<String> _scenariosCompletedSoFar = <String>[];
   OrderRunResult? _lastOrderRunResult;
   List<ApiTraceEvent> _apiTraces = const <ApiTraceEvent>[];
+
+  // The runner can emit several events and telemetry snapshots for one driver
+  // action. Keep those facts, but render them together so UI rebuilds never
+  // become part of the execution critical path.
+  static const _dashboardUpdateInterval = Duration(milliseconds: 150);
+  Timer? _dashboardUpdateTimer;
+  final List<QaActivityMessage> _pendingMessages = <QaActivityMessage>[];
+  final List<String> _pendingCompletedScenarios = <String>[];
+  final List<ExecutionEvent> _pendingExecutionEvents = <ExecutionEvent>[];
+  List<ApiTraceEvent>? _pendingApiTraces;
 
   // Layer 3: Live execution progress tracking for the AI workspace.
   final _executionSteps = <AiExecutionStep>[];
@@ -112,6 +131,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         .hasCompletedInitialSetup();
     final aiModeEnabled = await _preferences.loadAiModeEnabled();
     final aiModelConfig = await _preferences.loadAiModelConfig();
+    final noticeDisplayMode = await _preferences.loadNoticeDisplayMode();
     final selectedProfile = profiles.firstWhere(
       (profile) => profile.id == selectedProfileId,
       orElse: () => profiles.first,
@@ -138,6 +158,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _password = credentials.password;
       _unlockPin = credentials.unlockPin;
       _aiModelConfig = aiModelConfig;
+      _noticeDisplayMode = noticeDisplayMode;
       _aiModeEnabled = aiModeEnabled;
       _preferencesLoaded = true;
       _showFirstRunSetupPrompt = !hasCompletedInitialSetup;
@@ -232,18 +253,22 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       );
 
       if (choice != 'stop') return;
-      _stopActiveWork();
+      await _stopActiveWork();
     }
     setState(() => _aiModeEnabled = enabled);
     await _preferences.saveAiModeEnabled(enabled);
   }
 
-  void _stopActiveWork() {
+  Future<void> _stopActiveWork() async {
     _activePlanningHandle?.cancel();
     _activePlanningHandle = null;
     if (_running) {
-      _stopRunningSuite();
+      await _stopRunningSuite();
+      // Wait until the runner has converted the app-quit signal into a
+      // complete result and rendered the pass/fail report.
+      await _activeAiExecution;
     }
+    if (!mounted) return;
     setState(() {
       _aiPlanningWaiting = false;
     });
@@ -365,34 +390,36 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   }
 
   void _recordCompletedScenario(String scenarioName) {
-    if (!mounted) return;
-    setState(() {
-      if (!_scenariosCompletedSoFar.contains(scenarioName)) {
-        _scenariosCompletedSoFar.add(scenarioName);
-      }
-      final activeSuite = TestSuiteItem.availableSuites.firstWhere(
-        (s) => s.id == _selectedSuiteId,
-        orElse: () => TestSuiteItem.availableSuites.first,
-      );
-      final totalScenarios = activeSuite.scenarios.length;
+    _pendingCompletedScenarios.add(scenarioName);
+    _scheduleDashboardUpdate();
+  }
 
-      // Update or add the completed step
-      final existingIdx = _executionSteps.indexWhere(
-        (s) => s.scenarioName == scenarioName,
-      );
-      final step = AiExecutionStep(
-        scenarioName: scenarioName,
-        status: AiScenarioStatus.passed,
-        elapsedMs: _executionStopwatch.elapsedMilliseconds,
-        totalScenarios: totalScenarios,
-        completedScenarios: _scenariosCompletedSoFar.length,
-      );
-      if (existingIdx >= 0) {
-        _executionSteps[existingIdx] = step;
-      } else {
-        _executionSteps.add(step);
-      }
-    });
+  void _applyCompletedScenario(String scenarioName) {
+    if (!_scenariosCompletedSoFar.contains(scenarioName)) {
+      _scenariosCompletedSoFar.add(scenarioName);
+    }
+    final activeSuite = TestSuiteItem.availableSuites.firstWhere(
+      (s) => s.id == _selectedSuiteId,
+      orElse: () => TestSuiteItem.availableSuites.first,
+    );
+    final totalScenarios = activeSuite.scenarios.length;
+
+    // Update or add the completed step
+    final existingIdx = _executionSteps.indexWhere(
+      (s) => s.scenarioName == scenarioName,
+    );
+    final step = AiExecutionStep(
+      scenarioName: scenarioName,
+      status: AiScenarioStatus.passed,
+      elapsedMs: _executionStopwatch.elapsedMilliseconds,
+      totalScenarios: totalScenarios,
+      completedScenarios: _scenariosCompletedSoFar.length,
+    );
+    if (existingIdx >= 0) {
+      _executionSteps[existingIdx] = step;
+    } else {
+      _executionSteps.add(step);
+    }
   }
 
   void _recordExecutionEvent(ExecutionEvent event) {
@@ -402,23 +429,72 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       ExecutionEventLevel.info => QaActivityKind.info,
     });
 
-    // Update detail message on an existing matching scenario step if visible
-    if (mounted) {
-      final idx = _executionSteps.indexWhere(
-        (s) => s.scenarioName == event.title,
-      );
-      if (idx >= 0 && _executionSteps[idx].status == AiScenarioStatus.pending) {
-        setState(() {
-          _executionSteps[idx] = AiExecutionStep(
-            scenarioName: event.title,
-            status: AiScenarioStatus.running,
-            detail: event.message,
-            totalScenarios: _executionSteps[idx].totalScenarios,
-            completedScenarios: _scenariosCompletedSoFar.length,
-          );
-        });
-      }
+    _pendingExecutionEvents.add(event);
+    _scheduleDashboardUpdate();
+  }
+
+  void _applyExecutionEvent(ExecutionEvent event) {
+    final idx = _executionSteps.indexWhere(
+      (s) => s.scenarioName == event.title,
+    );
+    if (idx < 0 || _executionSteps[idx].status != AiScenarioStatus.pending) {
+      return;
     }
+    _executionSteps[idx] = AiExecutionStep(
+      scenarioName: event.title,
+      status: AiScenarioStatus.running,
+      detail: event.message,
+      totalScenarios: _executionSteps[idx].totalScenarios,
+      completedScenarios: _scenariosCompletedSoFar.length,
+    );
+  }
+
+  void _queueApiTraces(List<ApiTraceEvent> traces) {
+    // Each collector callback contains the complete cumulative trace list, so
+    // retaining only the newest snapshot cannot drop a trace.
+    _pendingApiTraces = List<ApiTraceEvent>.unmodifiable(traces);
+    _scheduleDashboardUpdate();
+  }
+
+  void _scheduleDashboardUpdate() {
+    if (!mounted || _dashboardUpdateTimer != null) return;
+    _dashboardUpdateTimer = Timer(
+      _dashboardUpdateInterval,
+      _flushDashboardUpdates,
+    );
+  }
+
+  void _flushDashboardUpdates() {
+    _dashboardUpdateTimer?.cancel();
+    _dashboardUpdateTimer = null;
+    if (!mounted) {
+      _pendingMessages.clear();
+      _pendingCompletedScenarios.clear();
+      _pendingExecutionEvents.clear();
+      _pendingApiTraces = null;
+      return;
+    }
+    if (_pendingMessages.isEmpty &&
+        _pendingCompletedScenarios.isEmpty &&
+        _pendingExecutionEvents.isEmpty &&
+        _pendingApiTraces == null) {
+      return;
+    }
+    setState(() {
+      _messages.addAll(_pendingMessages);
+      _pendingMessages.clear();
+      for (final scenario in _pendingCompletedScenarios) {
+        _applyCompletedScenario(scenario);
+      }
+      _pendingCompletedScenarios.clear();
+      for (final event in _pendingExecutionEvents) {
+        _applyExecutionEvent(event);
+      }
+      _pendingExecutionEvents.clear();
+      final traces = _pendingApiTraces;
+      if (traces != null) _apiTraces = traces;
+      _pendingApiTraces = null;
+    });
   }
 
   String _interruptionDetails({required bool wasStopped}) => wasStopped
@@ -608,6 +684,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _password = credentials.password;
       _unlockPin = credentials.unlockPin;
       _selectedSuiteId = plan.isOrder ? 'order_checkout' : 'login_terminal';
+      _loginRepeatCount = plan.isOrder ? 1 : plan.repeatCount;
       if (plan.isOrder) {
         _orderScenario = OrderScenario(
           id: 'ai_${profile.id}_order_cash',
@@ -628,7 +705,15 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       message:
           'Preflight passed for ${profile.label}. Launching ${plannedSuite.title}…',
     );
-    await _runSelectedSuite(skipPreflight: true);
+    final execution = _runSelectedSuite(skipPreflight: true);
+    _activeAiExecution = execution;
+    try {
+      await execution;
+    } finally {
+      if (identical(_activeAiExecution, execution)) {
+        _activeAiExecution = null;
+      }
+    }
   }
 
   /// Opens a validated assistant plan in the existing manual workspace without
@@ -883,6 +968,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     setState(() {
       _running = true;
       _lastExecutionPassed = null;
+      _lastCleanupPassed = null;
       _lastExecutionDetails = null;
       _apiTraces = const <ApiTraceEvent>[];
       _wasAppClosedByUser = false;
@@ -908,7 +994,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     final stopwatch = Stopwatch()..start();
     final telemetryCollector = ApiTraceCollector(
       onTracesCaptured: (traces) {
-        if (mounted) setState(() => _apiTraces = traces);
+        _queueApiTraces(traces);
       },
     );
 
@@ -966,12 +1052,14 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
           },
           onExecutionEvent: _recordExecutionEvent,
           telemetryCollector: telemetryCollector,
+          noticeDisplayMode: _noticeDisplayMode,
         );
 
         stopwatch.stop();
 
         setState(() {
           _lastOrderRunResult = result;
+          _lastCleanupPassed = result.passed;
           _lastExecutionDuration = stopwatch.elapsed;
           _lastExecutionPassed = result.passed;
           _wasAppClosedByUser = result.wasAppClosedByUser || _stopRequested;
@@ -1006,25 +1094,40 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
           );
         }
       } else {
-        final result = await PenguinPosLoginRunner().runFullSequence(
-          LoginScenario(
-            id: 'login_terminal_full_sequence',
-            name: 'Login and terminal selection',
-            loginId: _loginId,
-            password: _password,
-            unlockPin: _unlockPin,
-          ),
-          vmServiceUri: launched.vmServiceUri,
-          onExecutionEvent: _recordExecutionEvent,
-          onScenarioCompleted: _recordCompletedScenario,
-          telemetryCollector: telemetryCollector,
-        );
+        final loginRunner = PenguinPosLoginRunner();
+        late LoginRunResult result;
+        for (var iteration = 1; iteration <= _loginRepeatCount; iteration++) {
+          if (_loginRepeatCount > 1) {
+            _addMessage(
+              'Login Iteration',
+              'Running login cycle $iteration of $_loginRepeatCount in the same app session.',
+              QaActivityKind.info,
+            );
+          }
+          result = await loginRunner.runFullSequence(
+            LoginScenario(
+              id: 'login_terminal_full_sequence_$iteration',
+              name: 'Login and terminal selection',
+              loginId: _loginId,
+              password: _password,
+              unlockPin: _unlockPin,
+            ),
+            vmServiceUri: launched.vmServiceUri,
+            onExecutionEvent: _recordExecutionEvent,
+            onScenarioCompleted: _recordCompletedScenario,
+            telemetryCollector: telemetryCollector,
+            noticeDisplayMode: _noticeDisplayMode,
+          );
+          if (!result.passed || result.wasAppClosedByUser) break;
+        }
 
         stopwatch.stop();
 
         setState(() {
           _lastExecutionDuration = stopwatch.elapsed;
           _lastExecutionPassed = result.passed;
+          _lastCleanupPassed = result.cleanupPassed;
+          _lastLoginMetadata = result.metadata;
           _wasAppClosedByUser = result.wasAppClosedByUser || _stopRequested;
           _scenariosCompletedSoFar = result.scenariosExecuted;
           _lastExecutionDetails = result.passed
@@ -1084,6 +1187,10 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       } catch (_) {}
       if (identical(_activeLaunch, launched)) _activeLaunch = null;
       _executionStopwatch.stop();
+      // The final report must observe every execution event and the latest
+      // cumulative telemetry snapshot, even when the 150ms render window has
+      // not elapsed yet.
+      _flushDashboardUpdates();
       if (mounted) {
         setState(() {
           _running = false;
@@ -1093,6 +1200,10 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         if (_aiModeEnabled && _lastExecutionPassed != null) {
           final scenarioResults = <AiScenarioResult>[];
           final suiteScenarios = activeSuite.scenarios;
+          final failureDetail = _lastExecutionPassed == true
+              ? null
+              : (_lastExecutionDetails ??
+                    'The test did not reach its expected outcome.');
           for (final scenario in suiteScenarios) {
             final passed = _scenariosCompletedSoFar.contains(scenario.name);
             scenarioResults.add(
@@ -1102,12 +1213,16 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
                 durationMs: passed
                     ? (stopwatch.elapsedMilliseconds ~/ suiteScenarios.length)
                     : 0,
+                detail: passed ? null : failureDetail,
               ),
             );
           }
 
           final allScenariosPassed =
-              _lastExecutionPassed! && scenarioResults.every((s) => s.passed);
+              _lastExecutionPassed! &&
+              !_wasAppClosedByUser &&
+              _lastCleanupPassed != false &&
+              scenarioResults.every((s) => s.passed);
           final orderResult = _lastOrderRunResult;
           final reportContent = AiRichGenUi(
             document: _buildExecutionGenUi(
@@ -1116,6 +1231,9 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
               durationMs: stopwatch.elapsedMilliseconds,
               scenarioResults: scenarioResults,
               orderResult: orderResult,
+              cleanupPassed: _lastCleanupPassed,
+              wasAppClosed: _wasAppClosedByUser,
+              loginMetadata: _lastLoginMetadata,
             ),
           );
 
@@ -1163,30 +1281,23 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     required int durationMs,
     required List<AiScenarioResult> scenarioResults,
     required OrderRunResult? orderResult,
+    required bool? cleanupPassed,
+    required bool wasAppClosed,
+    required Map<String, Object?> loginMetadata,
   }) {
-    final apiEvents = _apiTraces
-        .map(
-          (trace) => <String, Object?>{
-            'method': trace.method,
-            'endpoint': trace.route,
-            'durationMs': trace.durationMs,
-            'transport': trace.transport.name == 'unknown'
-                ? 'http'
-                : trace.transport.name,
-            'mode': trace.mode.name == 'unknown'
-                ? (trace.transport.name == 'https' ? 'cloud' : 'local')
-                : trace.mode.name,
-            'result': trace.result.name,
-            if (trace.statusCode != null) 'statusCode': trace.statusCode,
-            'stepId': trace.stepId,
-            if (trace.timeoutBudgetMs > 0)
-              'timeoutBudgetMs': trace.timeoutBudgetMs,
-          },
-        )
-        .toList(growable: false);
-    final timeoutTraces = _apiTraces
-        .where((trace) => trace.result.name.endsWith('Timeout'))
-        .toList(growable: false);
+    final timeline = isOrder
+        ? _buildOrderTimeline(
+            scenarioResults,
+            orderResult: orderResult,
+            traces: _apiTraces,
+          )
+        : _buildLoginTimeline(
+            scenarioResults,
+            cleanupPassed: cleanupPassed,
+            wasAppClosed: wasAppClosed,
+            metadata: loginMetadata,
+            traces: _apiTraces,
+          );
     final document = QaGenUiDocument.tryParse(<String, Object?>{
       'components': <Object?>[
         <String, Object?>{
@@ -1201,30 +1312,8 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         <String, Object?>{
           'component': 'stepTimeline',
           'title': 'Execution timeline',
-          'steps': scenarioResults
-              .map(
-                (result) => <String, Object?>{
-                  'label': result.name,
-                  'status': result.passed ? 'passed' : 'failed',
-                  'durationMs': result.durationMs,
-                  if (result.detail != null) 'detail': result.detail,
-                },
-              )
-              .toList(growable: false),
+          'steps': timeline.map(_timelineJson).toList(growable: false),
         },
-        if (apiEvents.isNotEmpty)
-          <String, Object?>{
-            'component': 'apiSequence',
-            'title': 'API sequence',
-            'events': apiEvents,
-          },
-        for (final trace in timeoutTraces)
-          <String, Object?>{
-            'component': 'timeoutNotice',
-            'title': '${trace.method} ${trace.route}',
-            'timeoutResult': trace.result.name,
-            'timeoutBudgetMs': trace.timeoutBudgetMs,
-          },
         <String, Object?>{
           'component': 'resultSummary',
           'title': passed ? 'Suite passed' : 'Suite finished with failures',
@@ -1237,10 +1326,296 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     return document!;
   }
 
+  Map<String, Object?> _timelineJson(
+    AiScenarioResult result,
+  ) => <String, Object?>{
+    'label': result.name,
+    'status': result.detail?.startsWith('__pending__') == true
+        ? 'pending'
+        : result.detail?.startsWith('__skipped__') == true
+        ? 'skipped'
+        : (result.passed ? 'passed' : 'failed'),
+    if (result.durationMs >= 0) 'durationMs': result.durationMs,
+    if (result.detail != null &&
+        !result.detail!.startsWith('__pending__') &&
+        !result.detail!.startsWith('__skipped__'))
+      'detail': result.detail,
+    if (result.detail?.startsWith('__skipped__: ') == true)
+      'detail': result.detail!.substring('__skipped__: '.length),
+    if (result.children.isNotEmpty)
+      'children': result.children.map(_timelineJson).toList(growable: false),
+  };
+
+  List<AiScenarioResult> _buildOrderTimeline(
+    List<AiScenarioResult> scenarioResults, {
+    required OrderRunResult? orderResult,
+    required List<ApiTraceEvent> traces,
+  }) {
+    AiScenarioResult stage(
+      String name,
+      bool passed, {
+      String? detail,
+      List<AiScenarioResult> children = const <AiScenarioResult>[],
+    }) => AiScenarioResult(
+      name: name,
+      passed: passed,
+      durationMs: -1,
+      detail: detail,
+      children: children,
+    );
+
+    AiScenarioResult api(ApiTraceEvent trace) => AiScenarioResult(
+      name: '${trace.method} ${trace.route}',
+      passed: trace.result.name == 'success',
+      durationMs: trace.durationMs,
+      detail:
+          '${trace.statusCode ?? '-'} · ${trace.mode.name == 'unknown' ? 'target' : trace.mode.name}',
+    );
+
+    final initialScreen = orderResult?.metadata['initial_screen'];
+    final loggedIn =
+        orderResult?.metadata['initial_session_state'] == 'logged_in';
+    final loginApis = traces
+        .where(
+          (trace) =>
+              trace.route.toLowerCase().contains('/login') ||
+              trace.route.toLowerCase().contains('terminal-selection'),
+        )
+        .map(api)
+        .toList(growable: false);
+    final splashApis = traces
+        .where(
+          (trace) =>
+              trace.route.toLowerCase().contains('device-config') ||
+              trace.route.toLowerCase().contains('terminal-events'),
+        )
+        .map(api)
+        .toList(growable: false);
+    final orderSteps = <AiScenarioResult>[];
+    final metrics = orderResult?.loopMetrics ?? const <OrderLoopMetrics>[];
+    for (final metric in metrics) {
+      final children = metric.stepMetrics
+          .map(
+            (step) => AiScenarioResult(
+              name: step.stepName,
+              passed: true,
+              durationMs: step.uiRenderTimeMs,
+              detail: step.apiTelemetry == null
+                  ? null
+                  : '${step.apiTelemetry!.statusCode} · API ${step.apiTelemetry!.responseTimeMs}ms',
+            ),
+          )
+          .toList(growable: false);
+      orderSteps.add(
+        stage(
+          'Order ${metric.loopIndex}',
+          true,
+          detail: '${metric.itemsCount} items · ₹${metric.payableCash} cash',
+          children: children,
+        ),
+      );
+    }
+    if (orderSteps.isEmpty) {
+      orderSteps.addAll(
+        scenarioResults.map(
+          (result) => stage(result.name, result.passed, detail: result.detail),
+        ),
+      );
+    }
+
+    return <AiScenarioResult>[
+      stage(
+        'Splash Screen',
+        splashApis.isNotEmpty && splashApis.every((item) => item.passed),
+        children: splashApis,
+      ),
+      stage(
+        'Check If Logged In',
+        orderResult?.metadata.isNotEmpty == true,
+        detail: loggedIn
+            ? 'Already logged in on ${initialScreen ?? 'authenticated screen'} — login and terminal selection skipped.'
+            : 'Login screen detected — login and terminal selection required.',
+      ),
+      if (!loggedIn)
+        stage(
+          'Login',
+          loginApis
+              .where((item) => item.name.contains('/login'))
+              .every((item) => item.passed),
+          children: loginApis
+              .where((item) => item.name.contains('/login'))
+              .toList(growable: false),
+        ),
+      if (!loggedIn)
+        stage(
+          'Terminal Selection',
+          loginApis
+              .where((item) => item.name.contains('terminal-selection'))
+              .every((item) => item.passed),
+          children: loginApis
+              .where((item) => item.name.contains('terminal-selection'))
+              .toList(growable: false),
+        ),
+      stage(
+        'Continue With Order',
+        orderSteps.every((item) => item.passed),
+        children: orderSteps,
+      ),
+    ];
+  }
+
+  List<AiScenarioResult> _buildLoginTimeline(
+    List<AiScenarioResult> scenarioResults, {
+    required bool? cleanupPassed,
+    required bool wasAppClosed,
+    required Map<String, Object?> metadata,
+    required List<ApiTraceEvent> traces,
+  }) {
+    AiScenarioResult status(
+      String name,
+      bool passed, {
+      bool observed = true,
+      String? detail,
+      List<AiScenarioResult> children = const <AiScenarioResult>[],
+    }) => AiScenarioResult(
+      name: name,
+      passed: passed,
+      // Stage/decision rows are labels, not timed API calls. Durations are
+      // attached only to the concrete API rows below them in the flat chain.
+      durationMs: -1,
+      detail: detail ?? (observed ? null : '__pending__'),
+      children: children,
+    );
+    final completed = _scenariosCompletedSoFar.toSet();
+    final failure = scenarioResults
+        .where((item) => !item.passed && item.detail != null)
+        .map((item) => item.detail!)
+        .firstOrNull;
+    List<AiScenarioResult> apiRows(String category) {
+      final selected = traces.where((trace) {
+        final route = trace.route.toLowerCase();
+        return switch (category) {
+          'splash' => route.contains('splash'),
+          'device_config' =>
+            route.contains('device-config') && !route.contains('/modes'),
+          'device_modes' =>
+            route.contains('device-config') && route.contains('/modes'),
+          'terminal' => route.contains('terminal-events'),
+          'auth' =>
+            route.contains('/login') ||
+                route.contains('/logout') ||
+                route.contains('terminal-selection'),
+          _ => false,
+        };
+      });
+      return selected
+          .map(
+            (trace) => AiScenarioResult(
+              name: '${trace.method} ${trace.route}',
+              passed: trace.result.name == 'success',
+              durationMs: trace.durationMs,
+              detail:
+                  '${trace.statusCode ?? '-'} · ${trace.mode.name == 'unknown' ? 'target' : trace.mode.name}',
+            ),
+          )
+          .toList(growable: false);
+    }
+
+    final initialState = metadata['initial_session_state'];
+    final splashApis = <AiScenarioResult>[
+      ...apiRows('device_config'),
+      ...apiRows('device_modes'),
+      ...apiRows('terminal'),
+    ];
+    final logoutApis = apiRows('auth')
+        .where((item) => item.name.toLowerCase().contains('/logout'))
+        .toList(growable: false);
+    final initialLogout = initialState == 'logged_in' && logoutApis.isNotEmpty
+        ? <AiScenarioResult>[logoutApis.first]
+        : const <AiScenarioResult>[];
+    final finalLogout = logoutApis.length > 1
+        ? <AiScenarioResult>[logoutApis.last]
+        : (initialState == 'logged_out' && logoutApis.isNotEmpty
+              ? <AiScenarioResult>[logoutApis.last]
+              : const <AiScenarioResult>[]);
+    final loginApis = apiRows('auth')
+        .where((item) => item.name.toLowerCase().contains('/login'))
+        .toList(growable: false);
+    final terminalSelectionApis = apiRows('auth')
+        .where((item) => item.name.toLowerCase().contains('terminal-selection'))
+        .toList(growable: false);
+
+    return <AiScenarioResult>[
+      status(
+        'Splash Screen',
+        splashApis.isNotEmpty && splashApis.every((step) => step.passed),
+        observed: splashApis.isNotEmpty,
+        children: splashApis,
+      ),
+      status(
+        'Check If Logged In',
+        initialState != null,
+        observed: initialState != null || wasAppClosed,
+        detail: initialState == 'logged_out'
+            ? '__skipped__: Already logged out — no logout API required.'
+            : (initialState == 'logged_in'
+                  ? 'Existing session detected — initial logout required.'
+                  : (wasAppClosed
+                        ? 'PenguinPOS was quit before the initial logout.'
+                        : null)),
+        children: initialLogout.isEmpty
+            ? const <AiScenarioResult>[]
+            : <AiScenarioResult>[
+                status(
+                  'Logging Out User',
+                  initialLogout.every((step) => step.passed),
+                  children: initialLogout,
+                ),
+              ],
+      ),
+      status(
+        'Login',
+        completed.contains('Valid Login Flow') ||
+            traces.any(
+              (trace) =>
+                  trace.route.contains('/login') && trace.statusCode == 201,
+            ),
+        detail: failure,
+        children: loginApis,
+      ),
+      status(
+        'Terminal Selection',
+        completed.contains('Select Terminal') ||
+            terminalSelectionApis.isNotEmpty,
+        observed:
+            completed.contains('Select Terminal') ||
+            terminalSelectionApis.isNotEmpty,
+        detail: failure,
+        children: terminalSelectionApis,
+      ),
+      status(
+        'Logout',
+        cleanupPassed == true,
+        observed: cleanupPassed != null || wasAppClosed,
+        detail: cleanupPassed == true
+            ? null
+            : (wasAppClosed
+                  ? 'PenguinPOS was quit before logout.'
+                  : 'Logout was not completed.'),
+        children: finalLogout,
+      ),
+    ];
+  }
+
   void _addMessage(String title, String body, QaActivityKind kind) {
-    setState(() {
-      _messages.add(QaActivityMessage(title, body, kind));
-    });
+    _pendingMessages.add(QaActivityMessage(title, body, kind));
+    _scheduleDashboardUpdate();
+  }
+
+  @override
+  void dispose() {
+    _dashboardUpdateTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -1291,6 +1666,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     profiles: _profiles,
     activeProfile: _profile,
     aiModelConfig: _aiModelConfig,
+    noticeDisplayMode: _noticeDisplayMode,
     flutterPath: _flutterPath,
     appRoot: _appRoot,
     onProfileSelected: _selectProfile,
@@ -1301,6 +1677,10 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         _aiModelConnected = false;
       });
       unawaited(_refreshAiModelConnection(config));
+    },
+    onNoticeDisplayModeUpdated: (mode) {
+      setState(() => _noticeDisplayMode = mode);
+      unawaited(_preferences.saveNoticeDisplayMode(mode));
     },
     onClose: () => setState(() => _showSettingsScreen = false),
   );

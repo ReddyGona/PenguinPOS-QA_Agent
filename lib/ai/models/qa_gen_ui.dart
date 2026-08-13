@@ -115,12 +115,14 @@ class QaGenUiStep {
     required this.status,
     this.durationMs,
     this.detail,
+    this.children = const <QaGenUiStep>[],
   });
 
   final String label;
   final QaGenUiStepStatus status;
   final int? durationMs;
   final String? detail;
+  final List<QaGenUiStep> children;
 
   static QaGenUiStep? tryParse(Object? raw) {
     if (raw is! Map) return null;
@@ -136,6 +138,11 @@ class QaGenUiStep {
       status: status,
       durationMs: _safeInt(value['durationMs']),
       detail: _safeText(value['detail'], maxLength: 300),
+      children: _safeList(value['children'])
+          .map(QaGenUiStep.tryParse)
+          .whereType<QaGenUiStep>()
+          .take(50)
+          .toList(growable: false),
     );
   }
 }

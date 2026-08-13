@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:penguin_pos_qa_agent/automation/core/automation_pipeline.dart';
 import 'package:penguin_pos_qa_agent/automation/core/execution_context.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
+import 'package:penguin_pos_qa_agent/automation/core/telemetry/telemetry_dispatcher.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
@@ -37,6 +39,7 @@ class OrderRunResult {
     this.loopMetrics = const <OrderLoopMetrics>[],
     this.error,
     this.wasAppClosedByUser = false,
+    this.metadata = const <String, Object?>{},
   });
 
   final bool passed;
@@ -50,6 +53,7 @@ class OrderRunResult {
   final List<OrderLoopMetrics> loopMetrics;
   final String? error;
   final bool wasAppClosedByUser;
+  final Map<String, Object?> metadata;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'passed': passed,
@@ -61,6 +65,7 @@ class OrderRunResult {
     'startedAt': startedAt.toUtc().toIso8601String(),
     'finishedAt': finishedAt.toUtc().toIso8601String(),
     if (error != null) 'error': error,
+    if (metadata.isNotEmpty) 'metadata': metadata,
   };
 }
 
@@ -87,9 +92,14 @@ class PenguinPosOrderRunner {
     void Function(int completed, int total)? onBatchProgress,
     void Function(ExecutionEvent event)? onExecutionEvent,
     ApiTraceCollector? telemetryCollector,
+    QaTestNoticeDisplayMode noticeDisplayMode =
+        QaTestNoticeDisplayMode.warningsAndErrors,
   }) async {
     final startedAt = DateTime.now();
     final engine = driverEngine ?? DriverEngine();
+    final telemetryDispatcher = telemetryCollector == null
+        ? null
+        : TelemetryDispatcher(driver: engine, collector: telemetryCollector);
 
     int ordersCompleted = 0;
     final int targetOrders = scenario.effectiveOrdersCount > 0
@@ -110,16 +120,19 @@ class PenguinPosOrderRunner {
       );
     }
 
+    final execContext = ExecutionContext(
+      driver: engine,
+      timeout: timeout,
+      onEvent: onExecutionEvent,
+      telemetryCollector: telemetryCollector,
+      telemetryDispatcher: telemetryDispatcher,
+      noticeDisplayMode: noticeDisplayMode,
+    );
+    var runFailed = false;
+
     try {
       await engine.connect(vmServiceUri, timeout: timeout);
       emit('Driver Connected', 'Connected to PenguinPOS Flutter Driver.');
-
-      final execContext = ExecutionContext(
-        driver: engine,
-        timeout: timeout,
-        onEvent: onExecutionEvent,
-        telemetryCollector: telemetryCollector,
-      );
 
       // Step 1 & 2: Initial App state probe (Order Screen, Home, Login)
       _trace('Probing initial UI state (orderScreen, homeScreen, loginId)...');
@@ -133,6 +146,15 @@ class PenguinPosOrderRunner {
       _trace(
         'Initial UI state probed in ${probeDuration.inMilliseconds}ms: "$initialState"',
       );
+      execContext.state['initial_screen'] = initialState;
+      execContext.state['initial_session_state'] =
+          initialState == PenguinPosLoginKeys.loginId
+          ? 'logged_out'
+          : 'logged_in';
+      execContext.state['login_required'] =
+          initialState == PenguinPosLoginKeys.loginId;
+      execContext.state['terminal_selection_required'] =
+          initialState == PenguinPosLoginKeys.loginId;
 
       // Login prerequisite if app is currently on Login Screen
       if (initialState == PenguinPosLoginKeys.loginId) {
@@ -179,7 +201,6 @@ class PenguinPosOrderRunner {
           'Order ${orderIdx + 1} Started',
           'Preparing order ${orderIdx + 1} of $targetOrders.',
         );
-
         final state = OrderRunState(
           orderIndex: orderIdx + 1,
           scenario: scenario,
@@ -239,14 +260,22 @@ class PenguinPosOrderRunner {
         aggregateTotalPayable: aggregateTotalPayable,
         aggregatePayableAmount: aggregatePayableAmount,
         loopMetrics: loopMetricsList,
+        metadata: Map<String, Object?>.unmodifiable(execContext.state),
       );
     } catch (error) {
+      runFailed = true;
       final errorStr = redactSecrets(error.toString(), <String?>[
         scenario.loginId,
         scenario.password,
         scenario.unlockPin,
       ]);
       emit('Order Suite Error', errorStr, level: ExecutionEventLevel.error);
+      await execContext.showNotice(
+        QaTestNoticeSeverity.error,
+        'Order automation failed',
+        'Execution stopped. Check the QA Agent terminal for details.',
+      );
+
       final isAppClosed =
           errorStr.contains('Service has disappeared') ||
           errorStr.contains('112') ||
@@ -266,8 +295,17 @@ class PenguinPosOrderRunner {
         loopMetrics: loopMetricsList,
         error: errorStr,
         wasAppClosedByUser: isAppClosed,
+        metadata: Map<String, Object?>.unmodifiable(execContext.state),
       );
     } finally {
+      // Preserve the error notice after a failed run so the operator can
+      // inspect and dismiss it. Successful runs clear any stale notice.
+      if (!runFailed) {
+        await engine.clearQaTestNotice();
+      }
+      // Drain all queued step telemetry, including telemetry from a failed
+      // partial order, before the driver session becomes unavailable.
+      await telemetryDispatcher?.flush();
       await engine.close();
     }
   }
