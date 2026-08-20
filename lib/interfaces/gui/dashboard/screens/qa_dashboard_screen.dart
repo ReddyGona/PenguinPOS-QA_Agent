@@ -6,18 +6,17 @@ import 'package:penguin_pos_qa_agent/ai/models/ai_models.dart';
 import 'package:penguin_pos_qa_agent/ai/models/qa_gen_ui.dart';
 import 'package:penguin_pos_qa_agent/ai/orchestration/ai_orchestrator.dart';
 import 'package:penguin_pos_qa_agent/ai/providers/openai_compatible_provider.dart';
-import 'package:penguin_pos_qa_agent/application/execution/preflight_service.dart';
+import 'package:penguin_pos_qa_agent/application/execution/qa_execution_coordinator.dart';
+import 'package:penguin_pos_qa_agent/application/execution/test_run_command_mapper.dart';
+import 'package:penguin_pos_qa_agent/application/execution/unified_execution_service.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
-import 'package:penguin_pos_qa_agent/automation/login/login_runner.dart';
-import 'package:penguin_pos_qa_agent/automation/login/login_scenario.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_metrics.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
-import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_collector.dart';
 import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_event.dart';
 import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
-import 'package:penguin_pos_qa_agent/runtime/app_launcher.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_ssh_config.dart';
 import 'package:penguin_pos_qa_agent/runtime/path_detector.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
@@ -31,6 +30,7 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/assistant/
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/qa_settings_screen.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_credential_vault.dart';
 import 'package:penguin_pos_qa_agent/domain/plan/execution_plan.dart';
+import 'package:penguin_pos_qa_agent/domain/test_cases/test_run_command.dart';
 
 /// Coordinates dashboard configuration, test execution, and the AI workspace.
 ///
@@ -46,21 +46,20 @@ class QaDashboardScreen extends StatefulWidget {
 class _QaDashboardScreenState extends State<QaDashboardScreen> {
   final _preferences = QaTargetPreferencesRepository();
   final _credentialVault = QaCredentialVault();
+  final _executionService = UnifiedExecutionService();
 
   bool _preferencesLoaded = false;
   bool _showFirstRunSetupPrompt = false;
   bool _showSettingsScreen = false;
 
-  final QaTargetMode _targetMode = QaTargetMode.local;
+  QaTargetMode _targetMode = QaTargetMode.local;
+  QaSshConfig? _sshConfig;
   String _flutterPath = 'flutter';
-  String _appRoot = '/Users/reddygona/Documents/PenguinPOS/penguin_pos';
+  String _appRoot = '';
   List<QaProfile> _profiles = QaProfile.values;
   QaProfile _profile = QaProfile.values.first;
   String _loginId = '';
   String _password = '';
-  String _unlockPin = '';
-  String _sshUser = '';
-  String _sshHost = '';
 
   String _selectedSuiteId = 'login_terminal';
   OrderScenario _orderScenario = OrderScenario.sampleScenario;
@@ -81,14 +80,10 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   bool _running = false;
   bool _stopRequested = false;
   Future<void>? _activeAiExecution;
-  LaunchedPenguinPos? _activeLaunch;
   Duration? _lastExecutionDuration;
   bool? _lastExecutionPassed;
-  bool? _lastCleanupPassed;
   String? _lastExecutionDetails;
   bool _wasAppClosedByUser = false;
-  Map<String, Object?> _lastLoginMetadata = const <String, Object?>{};
-  int _loginRepeatCount = 1;
   List<String> _scenariosCompletedSoFar = <String>[];
   OrderRunResult? _lastOrderRunResult;
   List<ApiTraceEvent> _apiTraces = const <ApiTraceEvent>[];
@@ -124,18 +119,19 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
   }
 
   Future<void> _loadSavedTargetPreferences() async {
-    final target = await _preferences.loadSshTarget();
     final profiles = await _preferences.loadProfiles();
     final selectedProfileId = await _preferences.loadSelectedProfileId();
+    final selectedProfile = profiles.firstWhere(
+      (profile) => profile.id == selectedProfileId,
+      orElse: () => profiles.first,
+    );
+    final targetMode = await _preferences.loadTargetMode(selectedProfile.id);
+    final sshConfig = await _preferences.loadSshConfig(selectedProfile.id);
     var hasCompletedInitialSetup = await _preferences
         .hasCompletedInitialSetup();
     final aiModeEnabled = await _preferences.loadAiModeEnabled();
     final aiModelConfig = await _preferences.loadAiModelConfig();
     final noticeDisplayMode = await _preferences.loadNoticeDisplayMode();
-    final selectedProfile = profiles.firstWhere(
-      (profile) => profile.id == selectedProfileId,
-      orElse: () => profiles.first,
-    );
     final credentials = await _credentialVault.read(selectedProfile.id);
     // Existing users configured before this preference was introduced should
     // not see first-run setup again simply because the marker is new.
@@ -150,13 +146,12 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
 
     if (!mounted) return;
     setState(() {
-      _sshUser = target.username;
-      _sshHost = target.host;
       _profiles = profiles;
       _profile = selectedProfile;
       _loginId = credentials.loginId;
       _password = credentials.password;
-      _unlockPin = credentials.unlockPin;
+      _targetMode = targetMode;
+      _sshConfig = sshConfig;
       _aiModelConfig = aiModelConfig;
       _noticeDisplayMode = noticeDisplayMode;
       _aiModeEnabled = aiModeEnabled;
@@ -216,7 +211,6 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _profile = profile;
       _loginId = credentials.loginId;
       _password = credentials.password;
-      _unlockPin = credentials.unlockPin;
     });
     await _preferences.saveSelectedProfileId(profile.id);
   }
@@ -386,7 +380,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       'Stopping the active test case and closing the PenguinPOS instance launched by QA.',
       QaActivityKind.info,
     );
-    await _activeLaunch?.close();
+    await _executionService.requestStop();
   }
 
   void _recordCompletedScenario(String scenarioName) {
@@ -497,10 +491,6 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     });
   }
 
-  String _interruptionDetails({required bool wasStopped}) => wasStopped
-      ? 'Test stopped by the user. Completed test cases are retained; remaining cases are pending.'
-      : 'PenguinPOS was quit during testing. Completed test cases are retained; remaining cases are pending.';
-
   Future<AiAssistantResponse> _respondToAi(
     String input,
     List<AiChatMessage> history,
@@ -563,128 +553,24 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     }
   }
 
+  /// AI plans configure the same portable command as the Manual form. Profile
+  /// resolution happens here; all safety and runtime checks remain in the
+  /// unified execution service.
   Future<void> _runAiPlan(AiTestPlan plan) async {
+    if (_running) return;
     final profile = _profileForId(plan.profileId);
-    final plannedSuite = plan.isOrder
-        ? _suiteForId('order_checkout')
-        : _suiteForId('login_terminal');
-    final preflightSteps = <String>[
-      'Matched target profile: ${profile.label.isEmpty ? plan.profileId : profile.label}',
-      'Confirmed approved non-production target',
-      'Checked saved credentials',
-      'Checked ${plannedSuite.title} readiness',
-      'Confirmed local launch is available',
-    ];
-    _startAiPreflight(
-      profileLabel: profile.label.isEmpty ? plan.profileId : profile.label,
-      steps: preflightSteps,
-    );
-
     if (profile.id.isEmpty) {
-      _finishAiPreflight(
-        steps: preflightSteps,
-        failedStep: 0,
-        message:
-            'I could not find the selected target profile. Choose an approved non-production profile and try again.',
-      );
       _addMessage(
         'Execution Blocked',
-        'The selected target profile is no longer configured. Choose an approved non-production profile and try again.',
+        'The target profile in this plan is no longer configured.',
         QaActivityKind.error,
       );
       return;
     }
-    _updateAiPreflightStep(0, AiScenarioStatus.passed);
-    if (profile.isProduction) {
-      _finishAiPreflight(
-        steps: preflightSteps,
-        failedStep: 1,
-        message:
-            'Production environments are strictly prohibited. No application was launched.',
-      );
-      _addMessage(
-        'Execution Blocked',
-        'Production environments are strictly prohibited for QA Agent execution.',
-        QaActivityKind.error,
-      );
-      return;
-    }
-    _updateAiPreflightStep(1, AiScenarioStatus.passed);
-    final credentials = await _credentialVault.read(profile.id);
-    if (credentials.loginId.isEmpty || credentials.password.isEmpty) {
-      _finishAiPreflight(
-        steps: preflightSteps,
-        failedStep: 2,
-        message:
-            'Credentials are missing for ${profile.label}. Open Settings → Credentials, select this profile, and save the login ID and password.',
-      );
-      _addMessage(
-        'Credentials Required',
-        'Save the login ID and password for ${profile.label} in Settings → Credentials before running this plan.',
-        QaActivityKind.error,
-      );
-      return;
-    }
-    _updateAiPreflightStep(2, AiScenarioStatus.passed);
-
-    if (!plannedSuite.isImplemented) {
-      _finishAiPreflight(
-        steps: preflightSteps,
-        failedStep: 3,
-        message:
-            '${plannedSuite.title} is configured but does not yet have an executable runner.',
-      );
-      _addMessage(
-        'Suite Pending',
-        'The ${plannedSuite.title} runner is scheduled for the next phase.',
-        QaActivityKind.info,
-      );
-      return;
-    }
-    _updateAiPreflightStep(3, AiScenarioStatus.passed);
-
-    if (_targetMode == QaTargetMode.ssh) {
-      _finishAiPreflight(
-        steps: preflightSteps,
-        failedStep: 4,
-        message:
-            'SSH execution is not available yet. No application was launched.',
-      );
-      _addMessage(
-        'SSH Execution Pending',
-        'Target $_sshUser@$_sshHost saved. SSH remote runner is planned for next phase.',
-        QaActivityKind.info,
-      );
-      return;
-    }
-
-    final appRootIsValid = await PathDetector.isValidAppRoot(_appRoot);
-    final flutterIsValid = await PathDetector.isValidFlutterExecutable(
-      _flutterPath,
-    );
-    if (!appRootIsValid || !flutterIsValid) {
-      _finishAiPreflight(
-        steps: preflightSteps,
-        failedStep: 4,
-        message:
-            'The local PenguinPOS app path or Flutter executable is not ready. Review Settings → System & Engine Paths before running.',
-      );
-      _addMessage(
-        'Launch Setup Required',
-        'Review the PenguinPOS app root and Flutter executable in Settings → System & Engine Paths before running this plan.',
-        QaActivityKind.error,
-      );
-      return;
-    }
-    _updateAiPreflightStep(4, AiScenarioStatus.passed);
 
     setState(() {
       _profile = profile;
-      _loginId = credentials.loginId;
-      _password = credentials.password;
-      _unlockPin = credentials.unlockPin;
       _selectedSuiteId = plan.isOrder ? 'order_checkout' : 'login_terminal';
-      _loginRepeatCount = plan.isOrder ? 1 : plan.repeatCount;
       if (plan.isOrder) {
         _orderScenario = OrderScenario(
           id: 'ai_${profile.id}_order_cash',
@@ -700,12 +586,13 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       }
     });
     await _preferences.saveSelectedProfileId(profile.id);
-    _finishAiPreflight(
-      steps: preflightSteps,
-      message:
-          'Preflight passed for ${profile.label}. Launching ${plannedSuite.title}…',
+    _addMessage(
+      'Plan Accepted',
+      'Running the AI plan through the shared JSON execution pipeline.',
+      QaActivityKind.info,
     );
-    final execution = _runSelectedSuite(skipPreflight: true);
+
+    final execution = _runSelectedSuite();
     _activeAiExecution = execution;
     try {
       await execution;
@@ -735,7 +622,6 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       _profile = profile;
       _loginId = credentials.loginId;
       _password = credentials.password;
-      _unlockPin = credentials.unlockPin;
       _selectedSuiteId = plan.isOrder ? 'order_checkout' : 'login_terminal';
       if (plan.isOrder) {
         _orderScenario = OrderScenario(
@@ -767,490 +653,217 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         const QaProfile(id: '', label: '', entity: '', environment: ''),
   );
 
-  TestSuiteItem _suiteForId(String suiteId) =>
-      TestSuiteItem.availableSuites.firstWhere(
-        (suite) => suite.id == suiteId,
-        orElse: () => TestSuiteItem.availableSuites.first,
-      );
-
-  /// Emits a user-safe preflight timeline before an AI plan can launch the
-  /// target app. This is application activity, not private model reasoning.
-  void _startAiPreflight({
-    required String profileLabel,
-    required List<String> steps,
-  }) {
-    setState(() {
-      _running = true;
-      _executionSuiteTitle = 'Preflight checks';
-      _executionProfileLabel = profileLabel;
-      _executionSteps
-        ..clear()
-        ..addAll(
-          List<AiExecutionStep>.generate(
-            steps.length,
-            (index) => AiExecutionStep(
-              scenarioName: steps[index],
-              status: index == 0
-                  ? AiScenarioStatus.running
-                  : AiScenarioStatus.pending,
-              totalScenarios: steps.length,
-              completedScenarios: 0,
-            ),
-          ),
-        );
-    });
-  }
-
-  void _updateAiPreflightStep(int index, AiScenarioStatus status) {
-    if (index < 0 || index >= _executionSteps.length) return;
-    setState(() {
-      final previous = _executionSteps[index];
-      _executionSteps[index] = AiExecutionStep(
-        scenarioName: previous.scenarioName,
-        status: status,
-        totalScenarios: previous.totalScenarios,
-        completedScenarios: status == AiScenarioStatus.passed
-            ? index + 1
-            : index,
-      );
-      if (status == AiScenarioStatus.passed &&
-          index + 1 < _executionSteps.length) {
-        final next = _executionSteps[index + 1];
-        _executionSteps[index + 1] = AiExecutionStep(
-          scenarioName: next.scenarioName,
-          status: AiScenarioStatus.running,
-          totalScenarios: next.totalScenarios,
-          completedScenarios: index + 1,
-        );
-      }
-    });
-  }
-
-  void _finishAiPreflight({
-    required List<String> steps,
-    required String message,
-    int? failedStep,
-  }) {
-    if (failedStep != null) {
-      _updateAiPreflightStep(failedStep, AiScenarioStatus.failed);
-    }
-    if (_aiModeEnabled) {
-      setState(() {
-        _aiChatMessages.add(
-          AiChatMessage(
-            role: AiChatRole.assistant,
-            text: message,
-            richContent: AiRichPlanningSummary(
-              steps: steps,
-              failedStep: failedStep,
-            ),
-          ),
-        );
-      });
-    }
-    setState(() {
-      _running = false;
-      _executionSteps.clear();
-    });
-  }
-
-  ExecutionPlan _manualExecutionPlan() => ExecutionPlan(
+  TestRunCommand _manualTestRunCommand() => TestRunCommand(
+    testCaseId: _selectedSuiteId == 'order_checkout'
+        ? 'order_checkout'
+        : 'login_terminal',
     profileId: _profile.id,
-    suiteId: _selectedSuiteId == 'order_checkout'
-        ? QaSuiteId.orderCheckout
-        : QaSuiteId.loginTerminal,
-    orderConfiguration: _selectedSuiteId == 'order_checkout'
-        ? OrderExecutionConfiguration(
-            ordersCount: _orderScenario.ordersCount,
-            itemStrategy:
+    inputs: _selectedSuiteId == 'order_checkout'
+        ? <String, Object?>{
+            'ordersCount': _orderScenario.ordersCount,
+            'itemStrategy':
                 _orderScenario.uiCustomMode == UiCustomMode.perIteration
-                ? ExecutionItemStrategy.perOrder
-                : ExecutionItemStrategy.sameForAll,
-            items: _orderScenario.items,
-            perIterationItems: _orderScenario.perIterationItems,
-          )
-        : null,
+                ? 'perOrder'
+                : 'sameForAll',
+            'items': _orderScenario.items
+                .map((item) => item.toJson())
+                .toList(growable: false),
+            if (_orderScenario.perIterationItems.isNotEmpty)
+              'perOrderItems': _orderScenario.perIterationItems.entries
+                  .map(
+                    (entry) => <String, Object?>{
+                      'order': entry.key,
+                      'items': entry.value
+                          .map((item) => item.toJson())
+                          .toList(growable: false),
+                    },
+                  )
+                  .toList(growable: false),
+          }
+        : const <String, Object?>{},
   );
 
-  /// Manual mode uses the same safety contract as an AI-reviewed plan. The AI
-  /// path has already displayed this preflight before calling the runner.
-  Future<bool> _runManualPreflight() async {
-    final preflight = PreflightService(
-      PreflightDependencies(
-        findProfile: (profileId) {
-          final profile = _profileForId(profileId);
-          return profile.id.isEmpty
-              ? null
-              : PreflightProfile(
-                  id: profile.id,
-                  label: profile.label,
-                  isProduction: profile.isProduction,
-                );
-        },
-        hasSavedLoginCredentials: (profileId) async {
-          final credentials = await _credentialVault.read(profileId);
-          return credentials.loginId.isNotEmpty &&
-              credentials.password.isNotEmpty;
-        },
-        isSuiteImplemented: (suiteId) =>
-            _suiteForId(suiteId.storageValue).isImplemented,
-        checkRuntimeReadiness: () async => RuntimeReadiness(
-          localExecutionSupported: _targetMode == QaTargetMode.local,
-          appRootIsValid: await PathDetector.isValidAppRoot(_appRoot),
-          flutterExecutableIsValid: await PathDetector.isValidFlutterExecutable(
-            _flutterPath,
-          ),
-        ),
-      ),
-    );
-    final result = await preflight.check(_manualExecutionPlan());
-    if (result.passed) return true;
+  ExecutionPlan _manualExecutionPlan() =>
+      const TestRunCommandMapper().map(_manualTestRunCommand());
 
-    final failure = result.failure;
-    final message = failure?.message ?? 'The test plan did not pass preflight.';
-    _addMessage('Execution Blocked', message, QaActivityKind.error);
-    if (mounted) {
-      setState(() {
-        _lastExecutionPassed = null;
-        _wasAppClosedByUser = false;
-        _lastExecutionDetails = message;
-      });
-    }
-    return false;
-  }
-
+  /// The only GUI execution entry point. Both the Manual form and AI plan
+  /// handoff configure the same [ExecutionPlan], which is prepared and run by
+  /// the application service rather than by this widget.
   Future<void> _runSelectedSuite({bool skipPreflight = false}) async {
-    if (!skipPreflight && !await _runManualPreflight()) return;
-    // Keep this check at the execution boundary. AI planning and manual mode
-    // share this runner, so neither path can execute a production profile.
-    if (_profile.isProduction) {
-      _addMessage(
-        'Execution Blocked',
-        'Production environments are strictly prohibited for QA Agent execution.',
-        QaActivityKind.error,
-      );
-      return;
-    }
-    final currentSuite = _activeSuite;
-
-    if (!currentSuite.isImplemented) {
+    if (_running) return;
+    final activeSuite = _activeSuite;
+    if (!activeSuite.isImplemented) {
       _addMessage(
         'Suite Pending',
-        'The ${currentSuite.title} runner is scheduled for the next phase.',
+        'The ${activeSuite.title} runner is not available yet.',
         QaActivityKind.info,
       );
-      setState(() {
-        _lastExecutionPassed = null;
-        _wasAppClosedByUser = false;
-        _lastExecutionDetails =
-            'This test suite is currently planned for the upcoming release phase.';
-      });
       return;
     }
 
-    if (_targetMode == QaTargetMode.ssh) {
-      _addMessage(
-        'SSH Execution Pending',
-        'Target $_sshUser@$_sshHost saved. SSH remote runner is planned for next phase.',
-        QaActivityKind.info,
-      );
-      setState(() {
-        _lastExecutionPassed = null;
-        _wasAppClosedByUser = false;
-        _lastExecutionDetails =
-            'SSH execution target configured, but remote executor is intentionally deferred to the SSH phase.';
-      });
-      return;
-    }
-
-    final activeSuite = _activeSuite;
-
+    final plan = _manualExecutionPlan();
+    final liveTraces = <ApiTraceEvent>[];
+    final traceIds = <int>{};
     setState(() {
       _running = true;
+      _stopRequested = false;
       _lastExecutionPassed = null;
-      _lastCleanupPassed = null;
       _lastExecutionDetails = null;
+      _lastOrderRunResult = null;
       _apiTraces = const <ApiTraceEvent>[];
       _wasAppClosedByUser = false;
-      _stopRequested = false;
       _scenariosCompletedSoFar = <String>[];
+      // The activity panel and the Manual-mode timeline describe this run
+      // only. A previous cancellation must never appear beside a later pass.
+      _messages.clear();
+      _pendingMessages.clear();
       _executionSteps.clear();
       _executionSuiteTitle = activeSuite.title;
       _executionProfileLabel = _profile.label;
-
       _seedExecutionSteps(activeSuite);
     });
     _executionStopwatch
       ..reset()
       ..start();
-
     _addMessage(
       'Processing Suite',
-      'Launching PenguinPOS via $_flutterPath at $_appRoot for ${_profile.label}...',
+      'Preparing ${activeSuite.title} for ${_profile.label} (${_targetMode == QaTargetMode.local ? "Local" : "SSH Remote"}).',
+      QaActivityKind.info,
+    );
+    _addMessage(
+      'Preflight Checks',
+      'Validating profile, non-production safety, saved credentials, and target configuration.',
       QaActivityKind.info,
     );
 
-    LaunchedPenguinPos? launched;
-    final stopwatch = Stopwatch()..start();
-    final telemetryCollector = ApiTraceCollector(
-      onTracesCaptured: (traces) {
-        _queueApiTraces(traces);
-      },
-    );
-
     try {
-      launched = await PenguinPosAppLauncher().launch(
+      final prepared = await _executionService.prepareExecution(
+        plan: plan,
+        profile: _profile,
         appRoot: _appRoot,
         flutterExecutable: _flutterPath,
-        entity: _profile.entity,
-        env: _profile.environment,
+        targetMode: _targetMode,
+        sshConfig: _sshConfig,
       );
-      _activeLaunch = launched;
-
-      if (_stopRequested) {
-        stopwatch.stop();
-        setState(() {
-          _lastExecutionDuration = stopwatch.elapsed;
-          _lastExecutionPassed = false;
-          _wasAppClosedByUser = true;
-          _lastExecutionDetails = _interruptionDetails(wasStopped: true);
-        });
-        _addMessage(
-          'Test Stopped',
-          _lastExecutionDetails!,
-          QaActivityKind.info,
-        );
-        return;
-      }
-
-      if (_selectedSuiteId == 'order_checkout') {
-        final scenario = OrderScenario(
-          id: _orderScenario.id,
-          name: _orderScenario.name,
-          loginId: _loginId.isNotEmpty ? _loginId : null,
-          password: _password.isNotEmpty ? _password : null,
-          unlockPin: _unlockPin.isNotEmpty ? _unlockPin : null,
-          items: _orderScenario.items,
-          ordersCount: _orderScenario.ordersCount,
-          inputSourceMode: _orderScenario.inputSourceMode,
-          uiCustomMode: _orderScenario.uiCustomMode,
-          perIterationItems: _orderScenario.perIterationItems,
-          rawJson: _orderScenario.rawJson,
-          rawCsv: _orderScenario.rawCsv,
-        );
-
-        final result = await PenguinPosOrderRunner().run(
-          scenario,
-          vmServiceUri: launched.vmServiceUri,
+      _addMessage(
+        'Preflight Passed',
+        _targetMode == QaTargetMode.ssh
+            ? 'Profile and SSH target configuration are ready. Starting remote launch.'
+            : 'Profile and local application configuration are ready. Starting local launch.',
+        QaActivityKind.success,
+      );
+      final result = await _executionService.execute(
+        prepared,
+        callbacks: ExecutionCallbacks(
+          onEvent: _recordExecutionEvent,
           onScenarioCompleted: _recordCompletedScenario,
-          onBatchProgress: (completed, total) {
-            _addMessage(
-              'Order Progress',
-              'Completed order $completed of $total back-to-back orders.',
-              QaActivityKind.info,
-            );
+          onOrderProgress: (completed, total) => _addMessage(
+            'Order Progress',
+            'Completed order $completed of $total back-to-back orders.',
+            QaActivityKind.info,
+          ),
+          onApiTrace: (trace) {
+            if (traceIds.add(trace.traceId)) {
+              liveTraces.add(trace);
+              _queueApiTraces(List<ApiTraceEvent>.unmodifiable(liveTraces));
+            }
           },
-          onExecutionEvent: _recordExecutionEvent,
-          telemetryCollector: telemetryCollector,
-          noticeDisplayMode: _noticeDisplayMode,
-        );
-
-        stopwatch.stop();
-
-        setState(() {
-          _lastOrderRunResult = result;
-          _lastCleanupPassed = result.passed;
-          _lastExecutionDuration = stopwatch.elapsed;
-          _lastExecutionPassed = result.passed;
-          _wasAppClosedByUser = result.wasAppClosedByUser || _stopRequested;
-          if (result.passed) {
-            _scenariosCompletedSoFar = <String>[
-              'Start Sale & Customer Handling',
-              'SKU & Weighed Item Entry',
-              'Cash Payment & Round-Off',
-            ];
-          }
-          _lastExecutionDetails = result.passed
-              ? 'Punched ${result.ordersCompleted} orders (${result.totalItemsProcessed} total items). Aggregate payable: ₹${result.aggregateTotalPayable.toStringAsFixed(2)} → Cash: ₹${result.aggregatePayableAmount}.'
-              : (_wasAppClosedByUser
-                    ? _interruptionDetails(wasStopped: _stopRequested)
-                    : (result.error ??
-                          'The test driver did not reach the expected UI state.'));
-        });
-
-        if (_wasAppClosedByUser) {
-          _addMessage(
-            _stopRequested ? 'Test Stopped' : 'Application Quit',
-            _lastExecutionDetails!,
-            QaActivityKind.info,
-          );
-        } else {
-          _addMessage(
-            result.passed ? 'Order Suite Passed 🎉' : 'Order Suite Failed ❌',
-            result.passed
-                ? 'Punched ${result.ordersCompleted} of ${result.ordersTarget} orders (${result.totalItemsProcessed} items) in ${stopwatch.elapsed.inSeconds}s (Cash: ₹${result.aggregatePayableAmount}).'
-                : (result.error ?? 'Order checkout test failed.'),
-            result.passed ? QaActivityKind.success : QaActivityKind.error,
-          );
-        }
-      } else {
-        final loginRunner = PenguinPosLoginRunner();
-        late LoginRunResult result;
-        for (var iteration = 1; iteration <= _loginRepeatCount; iteration++) {
-          if (_loginRepeatCount > 1) {
-            _addMessage(
-              'Login Iteration',
-              'Running login cycle $iteration of $_loginRepeatCount in the same app session.',
-              QaActivityKind.info,
-            );
-          }
-          result = await loginRunner.runFullSequence(
-            LoginScenario(
-              id: 'login_terminal_full_sequence_$iteration',
-              name: 'Login and terminal selection',
-              loginId: _loginId,
-              password: _password,
-              unlockPin: _unlockPin,
-            ),
-            vmServiceUri: launched.vmServiceUri,
-            onExecutionEvent: _recordExecutionEvent,
-            onScenarioCompleted: _recordCompletedScenario,
-            telemetryCollector: telemetryCollector,
-            noticeDisplayMode: _noticeDisplayMode,
-          );
-          if (!result.passed || result.wasAppClosedByUser) break;
-        }
-
-        stopwatch.stop();
-
-        setState(() {
-          _lastExecutionDuration = stopwatch.elapsed;
-          _lastExecutionPassed = result.passed;
-          _lastCleanupPassed = result.cleanupPassed;
-          _lastLoginMetadata = result.metadata;
-          _wasAppClosedByUser = result.wasAppClosedByUser || _stopRequested;
-          _scenariosCompletedSoFar = result.scenariosExecuted;
-          _lastExecutionDetails = result.passed
-              ? 'Successfully executed all scenarios: ${result.scenariosExecuted.join(', ')}.${result.cleanupPassed == false ? ' Cleanup failed; session isolation is not guaranteed.' : ''}'
-              : (_wasAppClosedByUser
-                    ? _interruptionDetails(wasStopped: _stopRequested)
-                    : (result.error ??
-                          'The test driver did not reach the expected UI state.'));
-        });
-
-        if (_wasAppClosedByUser) {
-          _addMessage(
-            _stopRequested ? 'Test Stopped' : 'Application Quit',
-            _lastExecutionDetails!,
-            QaActivityKind.info,
-          );
-        } else {
-          _addMessage(
-            result.passed ? 'Suite Passed 🎉' : 'Suite Failed ❌',
-            result.passed
-                ? 'Completed in ${stopwatch.elapsed.inSeconds}s (${result.scenariosExecuted.length} scenarios).${result.cleanupPassed == false ? ' Cleanup failed; session isolation is not guaranteed.' : ''}'
-                : (result.error ?? 'Test execution failed.'),
-            result.passed ? QaActivityKind.success : QaActivityKind.error,
-          );
-        }
-      }
-    } catch (error) {
-      stopwatch.stop();
-      final errStr = error.toString();
-      final isAppQuit =
-          errStr.contains('Service has disappeared') ||
-          errStr.contains('112') ||
-          errStr.contains('SocketException') ||
-          errStr.contains('Closed');
-
-      setState(() {
-        _lastExecutionDuration = stopwatch.elapsed;
-        _lastExecutionPassed = false;
-        _wasAppClosedByUser = isAppQuit || _stopRequested;
-        _lastExecutionDetails = (isAppQuit || _stopRequested)
-            ? _interruptionDetails(wasStopped: _stopRequested)
-            : errStr;
-      });
-
-      if (isAppQuit || _stopRequested) {
-        _addMessage(
-          _stopRequested ? 'Test Stopped' : 'Application Quit',
-          _lastExecutionDetails!,
-          QaActivityKind.info,
-        );
-      } else {
-        _addMessage('Suite Error', errStr, QaActivityKind.error);
-      }
-    } finally {
-      try {
-        await launched?.close();
-      } catch (_) {}
-      if (identical(_activeLaunch, launched)) _activeLaunch = null;
-      _executionStopwatch.stop();
-      // The final report must observe every execution event and the latest
-      // cumulative telemetry snapshot, even when the 150ms render window has
-      // not elapsed yet.
+          onTelemetryWarning: (message) =>
+              _addMessage('Telemetry Warning', message, QaActivityKind.info),
+        ),
+      );
       _flushDashboardUpdates();
+      final orderResult = result.plan.isOrder
+          ? OrderRunResult(
+              passed: result.passed,
+              startedAt: result.startedAt,
+              finishedAt: result.finishedAt,
+              ordersCompleted: result.orderSummary?.ordersCompleted ?? 0,
+              ordersTarget: result.orderSummary?.ordersTarget ?? 0,
+              totalItemsProcessed:
+                  result.orderSummary?.totalItemsProcessed ?? 0,
+              aggregateTotalPayable:
+                  result.orderSummary?.aggregateTotalPayable ?? 0,
+              aggregatePayableAmount:
+                  result.orderSummary?.aggregatePayableAmount ?? 0,
+              loopMetrics: result.orderLoopMetrics,
+              error: result.error,
+              wasAppClosedByUser: result.wasAppClosedByUser,
+              metadata: result.runnerMetadata,
+            )
+          : null;
+      if (!mounted) return;
+      setState(() {
+        _lastExecutionDuration = result.duration;
+        _lastExecutionPassed = result.passed;
+        _wasAppClosedByUser = result.wasAppClosedByUser;
+        _lastOrderRunResult = orderResult;
+        _scenariosCompletedSoFar = List<String>.from(result.completedScenarios);
+        _apiTraces = result.apiTraces;
+        _lastExecutionDetails = result.passed
+            ? (result.plan.isOrder
+                  ? 'Punched ${result.orderSummary?.ordersCompleted ?? 0} orders (${result.orderSummary?.totalItemsProcessed ?? 0} total items).'
+                  : 'Successfully executed: ${result.completedScenarios.join(', ')}.')
+            : (result.error ?? 'The test did not reach the expected UI state.');
+      });
+      _addMessage(
+        result.passed ? 'Suite Passed' : 'Suite Failed',
+        _lastExecutionDetails!,
+        result.passed ? QaActivityKind.success : QaActivityKind.error,
+      );
+      if (_aiModeEnabled) {
+        final completed = result.completedScenarios.toSet();
+        final scenarioResults = activeSuite.scenarios
+            .map(
+              (scenario) => AiScenarioResult(
+                name: scenario.name,
+                passed: completed.contains(scenario.name),
+                durationMs: -1,
+                detail: completed.contains(scenario.name) ? null : result.error,
+              ),
+            )
+            .toList(growable: false);
+        _aiChatMessages.add(
+          AiChatMessage(
+            role: AiChatRole.assistant,
+            text: result.passed
+                ? 'Test suite completed successfully.'
+                : 'Test suite finished with failures.',
+            richContent: AiRichGenUi(
+              document: _buildExecutionGenUi(
+                isOrder: result.plan.isOrder,
+                passed: result.passed,
+                durationMs: result.duration.inMilliseconds,
+                scenarioResults: scenarioResults,
+                orderResult: orderResult,
+                cleanupPassed: result.cleanupPassed,
+                wasAppClosed: result.wasAppClosedByUser,
+                loginMetadata: result.runnerMetadata,
+              ),
+            ),
+          ),
+        );
+      }
+    } on PreflightValidationException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _lastExecutionPassed = null;
+        _lastExecutionDetails = error.message;
+      });
+      _addMessage('Execution Blocked', error.message, QaActivityKind.error);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _lastExecutionPassed = false;
+        _lastExecutionDetails = error.toString();
+      });
+      _addMessage('Suite Error', error.toString(), QaActivityKind.error);
+    } finally {
+      _flushDashboardUpdates();
+      _executionStopwatch.stop();
       if (mounted) {
         setState(() {
           _running = false;
-        });
-
-        // Layer 3: Auto-inject a rich test report message into the chat
-        if (_aiModeEnabled && _lastExecutionPassed != null) {
-          final scenarioResults = <AiScenarioResult>[];
-          final suiteScenarios = activeSuite.scenarios;
-          final failureDetail = _lastExecutionPassed == true
-              ? null
-              : (_lastExecutionDetails ??
-                    'The test did not reach its expected outcome.');
-          for (final scenario in suiteScenarios) {
-            final passed = _scenariosCompletedSoFar.contains(scenario.name);
-            scenarioResults.add(
-              AiScenarioResult(
-                name: scenario.name,
-                passed: passed,
-                durationMs: passed
-                    ? (stopwatch.elapsedMilliseconds ~/ suiteScenarios.length)
-                    : 0,
-                detail: passed ? null : failureDetail,
-              ),
-            );
-          }
-
-          final allScenariosPassed =
-              _lastExecutionPassed! &&
-              !_wasAppClosedByUser &&
-              _lastCleanupPassed != false &&
-              scenarioResults.every((s) => s.passed);
-          final orderResult = _lastOrderRunResult;
-          final reportContent = AiRichGenUi(
-            document: _buildExecutionGenUi(
-              isOrder: _selectedSuiteId == 'order_checkout',
-              passed: allScenariosPassed,
-              durationMs: stopwatch.elapsedMilliseconds,
-              scenarioResults: scenarioResults,
-              orderResult: orderResult,
-              cleanupPassed: _lastCleanupPassed,
-              wasAppClosed: _wasAppClosedByUser,
-              loginMetadata: _lastLoginMetadata,
-            ),
-          );
-
-          final reportMessage = AiChatMessage(
-            role: AiChatRole.assistant,
-            text: allScenariosPassed
-                ? 'Test suite completed successfully.'
-                : 'Test suite finished with failures.',
-            richContent: reportContent,
-          );
-          setState(() {
-            _aiChatMessages.add(reportMessage);
-          });
-        }
-
-        // Clear temporary execution steps so floating tracker box disappears
-        setState(() {
           _executionSteps.clear();
         });
       }
@@ -1669,6 +1282,8 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
     noticeDisplayMode: _noticeDisplayMode,
     flutterPath: _flutterPath,
     appRoot: _appRoot,
+    targetMode: _targetMode,
+    sshConfig: _sshConfig,
     onProfileSelected: _selectProfile,
     onProfilesUpdated: (profiles) => setState(() => _profiles = profiles),
     onAiModelConfigUpdated: (config) {
@@ -1682,7 +1297,18 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       setState(() => _noticeDisplayMode = mode);
       unawaited(_preferences.saveNoticeDisplayMode(mode));
     },
-    onClose: () => setState(() => _showSettingsScreen = false),
+    onTargetModeUpdated: (mode) {
+      setState(() => _targetMode = mode);
+      unawaited(_preferences.saveTargetMode(_profile.id, mode));
+    },
+    onSshConfigUpdated: (config) {
+      setState(() => _sshConfig = config);
+      unawaited(_preferences.saveSshConfig(_profile.id, config));
+    },
+    onClose: () {
+      setState(() => _showSettingsScreen = false);
+      unawaited(_loadSavedTargetPreferences());
+    },
   );
 
   Widget _buildAssistantWorkspace() => AiAssistantWorkspace(
@@ -1755,7 +1381,11 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
               const SizedBox(height: 12),
               SizedBox(
                 height: 280,
-                child: ApiActivityPanel(traces: _apiTraces),
+                child: ApiActivityPanel(
+                  traces: _apiTraces,
+                  onClearTraces: () =>
+                      setState(() => _apiTraces = const <ApiTraceEvent>[]),
+                ),
               ),
             ],
           ),
@@ -1796,6 +1426,53 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
             'Settings',
             style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
           ),
+        ),
+        const SizedBox(width: 8),
+        const VerticalDivider(
+          width: 1,
+          indent: 4,
+          endIndent: 4,
+          color: Color(0xFFE2E8F0),
+        ),
+        const SizedBox(width: 8),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Local',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: _targetMode == QaTargetMode.local
+                    ? const Color(0xFF0F172A)
+                    : const Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Switch.adaptive(
+              value: _targetMode == QaTargetMode.ssh,
+              onChanged: _running
+                  ? null
+                  : (isSsh) {
+                      final newMode = isSsh
+                          ? QaTargetMode.ssh
+                          : QaTargetMode.local;
+                      setState(() => _targetMode = newMode);
+                      unawaited(_preferences.saveTargetMode(newMode));
+                    },
+            ),
+            const SizedBox(width: 4),
+            Text(
+              'SSH',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: _targetMode == QaTargetMode.ssh
+                    ? const Color(0xFF0F172A)
+                    : const Color(0xFF64748B),
+              ),
+            ),
+          ],
         ),
         const SizedBox(width: 8),
         const VerticalDivider(
@@ -1877,6 +1554,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
         lastExecutionDetails: _lastExecutionDetails,
         wasAppClosedByUser: _wasAppClosedByUser,
         scenariosCompleted: _scenariosCompletedSoFar,
+        liveMessages: List<QaActivityMessage>.unmodifiable(_messages),
         orderScenario: _orderScenario,
         lastOrderRunResult: _lastOrderRunResult,
         onUpdateScenario: (scenario) =>
@@ -1899,6 +1577,7 @@ class _QaDashboardScreenState extends State<QaDashboardScreen> {
       lastExecutionDetails: _lastExecutionDetails,
       wasAppClosedByUser: _wasAppClosedByUser,
       scenariosCompleted: _scenariosCompletedSoFar,
+      liveMessages: List<QaActivityMessage>.unmodifiable(_messages),
       onLoginIdChanged: (loginId) => setState(() => _loginId = loginId),
       onPasswordChanged: (password) => setState(() => _password = password),
       onRunSuite: _runSelectedSuite,

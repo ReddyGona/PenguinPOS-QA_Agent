@@ -52,6 +52,23 @@ class SynchronizeCartBlock implements AutomationBlock {
         if (nextAction == PenguinPosOrderKeys.orderUpdateCart) {
           updateCartTapCount++;
           await driver.tap(PenguinPosOrderKeys.orderUpdateCart);
+          // Cart recalculation is asynchronous in PenguinPOS.  A fast local
+          // driver can observe the old Update Cart button again before Linux
+          // has applied the response, leading to five duplicate taps and a
+          // false failure over SSH.  Give the target one bounded render turn
+          // before probing the next action.
+          context.emit(
+            'Cart Recalculation',
+            'Update Cart requested; waiting for PenguinPOS to refresh checkout readiness.',
+          );
+          final settleFor = cartDeadline.difference(DateTime.now());
+          if (settleFor > Duration.zero) {
+            await Future<void>.delayed(
+              settleFor < const Duration(milliseconds: 750)
+                  ? settleFor
+                  : const Duration(milliseconds: 750),
+            );
+          }
         }
       } on TimeoutException {
         break;
@@ -83,15 +100,7 @@ class SynchronizeCartBlock implements AutomationBlock {
     state.stepMetrics.add(
       OrderStepMetric(
         stepName: 'Cart Update & Checkout Proceed',
-        uiRenderTimeMs: DateTime.now()
-            .difference(cartStart)
-            .inMilliseconds
-            .clamp(150, 380),
-        apiTelemetry: const OrderApiTelemetry(
-          endpoint: 'POST /api/v1/orders/cart/update',
-          statusCode: 200,
-          responseTimeMs: 68,
-        ),
+        uiRenderTimeMs: DateTime.now().difference(cartStart).inMilliseconds,
       ),
     );
   }

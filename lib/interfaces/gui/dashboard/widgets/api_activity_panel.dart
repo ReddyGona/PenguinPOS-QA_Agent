@@ -49,22 +49,25 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
 
   Widget _buildHeader(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
-          const Icon(Icons.api_rounded, size: 18, color: Color(0xFF0284C7)),
-          const SizedBox(width: 8),
-          const Text(
-            'API Activity Telemetry',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF0F172A),
+          const Icon(Icons.api_rounded, size: 16, color: Color(0xFF0284C7)),
+          const SizedBox(width: 6),
+          const Flexible(
+            child: Text(
+              'API Activity Telemetry',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF0F172A),
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
               color: const Color(0xFFF0F9FF),
               borderRadius: BorderRadius.circular(12),
@@ -73,7 +76,7 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
             child: Text(
               '${widget.traces.length} events',
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 10.5,
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF0284C7),
               ),
@@ -82,12 +85,16 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
           const Spacer(),
           if (widget.traces.isNotEmpty) ...[
             IconButton(
-              icon: const Icon(Icons.download_rounded, size: 16),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+              icon: const Icon(Icons.download_rounded, size: 15),
               tooltip: 'Export Redacted JSON',
               onPressed: _exportJson,
             ),
             IconButton(
-              icon: const Icon(Icons.delete_outline_rounded, size: 16),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+              icon: const Icon(Icons.delete_outline_rounded, size: 15),
               tooltip: 'Clear Traces',
               onPressed: widget.onClearTraces,
             ),
@@ -99,39 +106,42 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
 
   Widget _buildEmptyState() {
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(
-            Icons.wifi_tethering_off_rounded,
-            size: 32,
-            color: Color(0xFF94A3B8),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'No API Activity Captured',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF64748B),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(
+              Icons.wifi_tethering_off_rounded,
+              size: 28,
+              color: Color(0xFF94A3B8),
             ),
-          ),
-          SizedBox(height: 4),
-          Text(
-            'HTTP requests made by PenguinPOS during test execution will appear here live.',
-            style: TextStyle(fontSize: 11.5, color: Color(0xFF94A3B8)),
-            textAlign: TextAlign.center,
-          ),
-        ],
+            SizedBox(height: 6),
+            Text(
+              'No API Activity Captured',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF64748B),
+              ),
+            ),
+            SizedBox(height: 3),
+            Text(
+              'HTTP requests made by PenguinPOS during test execution will appear here live.',
+              style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildTraceList(BuildContext context) {
     return ListView.separated(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       itemCount: widget.traces.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      separatorBuilder: (_, _) => const SizedBox(height: 6),
       itemBuilder: (context, index) {
         final trace = widget.traces[widget.traces.length - 1 - index];
         final isExpanded = _expandedTraceId == trace.traceId;
@@ -167,7 +177,7 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
           });
         },
         child: Padding(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -175,8 +185,8 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
+                      horizontal: 5,
+                      vertical: 1.5,
                     ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF1F5F9),
@@ -185,28 +195,29 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
                     child: Text(
                       trace.method,
                       style: const TextStyle(
-                        fontSize: 11,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF334155),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       trace.route,
                       style: const TextStyle(
-                        fontSize: 12.5,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF0F172A),
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  const SizedBox(width: 6),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
+                      horizontal: 5,
+                      vertical: 1.5,
                     ),
                     decoration: BoxDecoration(
                       color: statusColor.withValues(alpha: 0.1),
@@ -217,17 +228,17 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
                           ? '${trace.statusCode} ${trace.result.name}'
                           : trace.result.name,
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.w600,
                         color: statusColor,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   Text(
                     '${trace.durationMs} ms',
                     style: const TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.w500,
                       color: Color(0xFF64748B),
                     ),
@@ -237,19 +248,22 @@ class _ApiActivityPanelState extends State<ApiActivityPanel> {
               const SizedBox(height: 4),
               Row(
                 children: [
-                  Text(
-                    'Step: ${trace.stepId}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF64748B),
+                  Expanded(
+                    child: Text(
+                      'Step: ${trace.stepId}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF64748B),
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   if (trace.timeoutBudgetMs > 0) ...[
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Text(
                       'Budget: ${trace.timeoutBudgetMs}ms',
                       style: const TextStyle(
-                        fontSize: 11,
+                        fontSize: 10.5,
                         color: Color(0xFF94A3B8),
                       ),
                     ),

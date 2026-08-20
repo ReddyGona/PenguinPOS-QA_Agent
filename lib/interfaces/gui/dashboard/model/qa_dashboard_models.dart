@@ -1,4 +1,4 @@
-enum QaTargetMode { local, ssh }
+export 'package:penguin_pos_qa_agent/domain/profiles/qa_target_mode.dart';
 
 enum QaActivityKind { info, success, error }
 

@@ -210,7 +210,11 @@ void main() {
           id: 's2',
           name: 'Item Test',
           items: [
-            OrderItem(skuCode: '101', entryMode: ItemEntryMode.manualNumpad),
+            OrderItem(
+              skuCode: '101',
+              quantity: 2,
+              entryMode: ItemEntryMode.manualNumpad,
+            ),
           ],
         );
         final state = OrderRunState(orderIndex: 1, scenario: scenario);
@@ -218,7 +222,7 @@ void main() {
         final block = EnterOrderItemsBlock(state: state);
         await block.execute(context);
 
-        expect(state.itemsThisOrder, equals(1));
+        expect(state.itemsThisOrder, equals(2));
         expect(
           driver.tappedKeys,
           contains(PenguinPosOrderKeys.orderNumPadDigit('1')),
@@ -230,6 +234,12 @@ void main() {
         expect(
           driver.tappedKeys,
           contains(PenguinPosOrderKeys.orderNumPadEnter),
+        );
+        expect(
+          driver.tappedKeys
+              .where((key) => key == PenguinPosOrderKeys.orderNumPadEnter)
+              .length,
+          2,
         );
       },
     );

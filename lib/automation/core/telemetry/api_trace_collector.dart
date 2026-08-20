@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'dart:developer' as developer;
 import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
 import 'package:penguin_pos_qa_agent/automation/core/telemetry/api_trace_event.dart';
+
+/// Callback signature for telemetry event updates.
+typedef TelemetryEventCallback<T> = void Function(T value);
 
 /// Collector for fetching incremental API telemetry traces from a running target app.
 class ApiTraceCollector {
@@ -20,9 +23,9 @@ class ApiTraceCollector {
   Future<void> _backgroundWork = Future<void>.value();
   Timer? _notificationTimer;
   bool _notificationPending = false;
-  final ValueChanged<List<ApiTraceEvent>>? onTracesCaptured;
-  final ValueChanged<ApiTraceEvent>? onTraceCaptured;
-  final ValueChanged<String>? onTelemetryWarning;
+  final TelemetryEventCallback<List<ApiTraceEvent>>? onTracesCaptured;
+  final TelemetryEventCallback<ApiTraceEvent>? onTraceCaptured;
+  final TelemetryEventCallback<String>? onTelemetryWarning;
 
   /// Limits how often a live dashboard is rebuilt while traces are arriving.
   final Duration notificationBatchWindow;
@@ -169,7 +172,7 @@ class ApiTraceCollector {
   }
 
   void _warn(String message) {
-    debugPrint('[ApiTraceCollector] $message');
+    developer.log(message, name: 'ApiTraceCollector');
     onTelemetryWarning?.call(message);
   }
 }

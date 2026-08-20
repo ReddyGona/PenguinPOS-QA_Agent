@@ -82,15 +82,7 @@ class CollectCashPaymentBlock implements AutomationBlock {
     state.stepMetrics.add(
       OrderStepMetric(
         stepName: 'Cash Payment & Round-Off Tender',
-        uiRenderTimeMs: DateTime.now()
-            .difference(paymentStart)
-            .inMilliseconds
-            .clamp(210, 520),
-        apiTelemetry: const OrderApiTelemetry(
-          endpoint: 'POST /api/v1/payments/cash',
-          statusCode: 200,
-          responseTimeMs: 112,
-        ),
+        uiRenderTimeMs: DateTime.now().difference(paymentStart).inMilliseconds,
       ),
     );
   }

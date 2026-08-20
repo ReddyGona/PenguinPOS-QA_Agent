@@ -16,43 +16,71 @@ class QaStoredCredentials {
 
 /// Stores local QA credentials by profile.
 ///
-/// This desktop agent intentionally uses SharedPreferences so local debug
-/// builds do not depend on macOS Keychain entitlements or code signing.
+/// Uses SharedPreferences with an in-memory fallback for headless CLI and test execution.
 class QaCredentialVault {
+  static final Map<String, String> _inMemoryFallback = <String, String>{};
+
   String _key(String profileId, String field) => 'qa.profile.$profileId.$field';
 
+  Future<SharedPreferences?> _getPrefs() async {
+    try {
+      return await SharedPreferences.getInstance();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<QaStoredCredentials> read(String profileId) async {
-    final preferences = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
+    if (prefs != null) {
+      return QaStoredCredentials(
+        loginId: prefs.getString(_key(profileId, 'login_id')) ?? '',
+        password: prefs.getString(_key(profileId, 'password')) ?? '',
+        unlockPin: prefs.getString(_key(profileId, 'unlock_pin')) ?? '',
+      );
+    }
     return QaStoredCredentials(
-      loginId: preferences.getString(_key(profileId, 'login_id')) ?? '',
-      password: preferences.getString(_key(profileId, 'password')) ?? '',
-      unlockPin: preferences.getString(_key(profileId, 'unlock_pin')) ?? '',
+      loginId: _inMemoryFallback[_key(profileId, 'login_id')] ?? '',
+      password: _inMemoryFallback[_key(profileId, 'password')] ?? '',
+      unlockPin: _inMemoryFallback[_key(profileId, 'unlock_pin')] ?? '',
     );
   }
 
   Future<void> write(String profileId, QaStoredCredentials credentials) async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(
-      _key(profileId, 'login_id'),
-      credentials.loginId,
-    );
-    await preferences.setString(
-      _key(profileId, 'password'),
-      credentials.password,
-    );
-    await preferences.setString(
-      _key(profileId, 'unlock_pin'),
-      credentials.unlockPin,
-    );
+    final prefs = await _getPrefs();
+    if (prefs != null) {
+      try {
+        await prefs.setString(_key(profileId, 'login_id'), credentials.loginId);
+        await prefs.setString(
+          _key(profileId, 'password'),
+          credentials.password,
+        );
+        await prefs.setString(
+          _key(profileId, 'unlock_pin'),
+          credentials.unlockPin,
+        );
+      } catch (_) {}
+    }
+    _inMemoryFallback[_key(profileId, 'login_id')] = credentials.loginId;
+    _inMemoryFallback[_key(profileId, 'password')] = credentials.password;
+    _inMemoryFallback[_key(profileId, 'unlock_pin')] = credentials.unlockPin;
   }
 
   Future<String> readAiApiKey() async {
-    final preferences = await SharedPreferences.getInstance();
-    return preferences.getString('qa.ai.api_key') ?? '';
+    final prefs = await _getPrefs();
+    if (prefs != null) {
+      return prefs.getString('qa.ai.api_key') ?? '';
+    }
+    return _inMemoryFallback['qa.ai.api_key'] ?? '';
   }
 
   Future<void> writeAiApiKey(String apiKey) async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString('qa.ai.api_key', apiKey);
+    final prefs = await _getPrefs();
+    if (prefs != null) {
+      try {
+        await prefs.setString('qa.ai.api_key', apiKey);
+      } catch (_) {}
+    }
+    _inMemoryFallback['qa.ai.api_key'] = apiKey;
   }
 }

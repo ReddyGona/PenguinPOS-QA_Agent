@@ -1,14 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter_driver/flutter_driver.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguin_pos_qa_agent/automation/execution_event.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_keys.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_scenario.dart';
 import 'package:penguin_pos_qa_agent/runtime/driver_engine.dart';
-
-class FakeFlutterDriver extends Fake implements FlutterDriver {}
 
 class StatefulFakeDriverEngine extends DriverEngine {
   StatefulFakeDriverEngine({
@@ -22,12 +19,10 @@ class StatefulFakeDriverEngine extends DriverEngine {
   final void Function(String key, Set<String> currentKeys)? onTapKey;
 
   @override
-  Future<FlutterDriver> connect(
+  Future<void> connect(
     Uri vmServiceUri, {
     Duration timeout = const Duration(seconds: 45),
-  }) async {
-    return FakeFlutterDriver();
-  }
+  }) async {}
 
   @override
   Future<bool> hasKey(
@@ -289,7 +284,7 @@ void main() {
     );
 
     test(
-      '5. Emits partial-transition timeout diagnostic when 1-4 taps occur before deadline',
+      '5. Waits for cart recalculation before reporting a partial-transition timeout',
       () async {
         final events = <ExecutionEvent>[];
         final tapped = <String>[];
@@ -302,10 +297,6 @@ void main() {
           onTapKey: (tappedKey, currentKeys) {
             if (tappedKey == PenguinPosOrderKeys.orderUpdateCart) {
               tapCount++;
-              if (tapCount == 2) {
-                // After 2 taps, remove updateCart so next wait times out
-                currentKeys.remove(PenguinPosOrderKeys.orderUpdateCart);
-              }
             }
           },
         );
@@ -320,11 +311,13 @@ void main() {
         );
 
         expect(result.passed, isFalse);
-        expect(tapCount, equals(2));
+        // Do not repeat a stale Update Cart tap while the target is still
+        // applying the asynchronous cart calculation.
+        expect(tapCount, equals(1));
         expect(
           events.any(
             (e) => e.message.contains(
-              'Update Cart was tapped 2 times, but the cart did not transition to payment readiness before the deadline',
+              'Update Cart was tapped 1 time, but the cart did not transition to payment readiness before the deadline',
             ),
           ),
           isTrue,

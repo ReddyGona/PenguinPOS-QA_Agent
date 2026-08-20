@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 enum SettingsTab {
   credentials,
+  ssh,
   profiles,
   aiModels,
   qaNotices,
@@ -33,6 +34,12 @@ class SettingsSidebar extends StatelessWidget {
             icon: Icons.key_rounded,
             label: 'Credentials & PINs',
             onTap: () => onSelectTab(SettingsTab.credentials),
+          ),
+          _SidebarItem(
+            active: activeTab == SettingsTab.ssh,
+            icon: Icons.lan_outlined,
+            label: 'SSH Remote POS',
+            onTap: () => onSelectTab(SettingsTab.ssh),
           ),
           _SidebarItem(
             active: activeTab == SettingsTab.profiles,

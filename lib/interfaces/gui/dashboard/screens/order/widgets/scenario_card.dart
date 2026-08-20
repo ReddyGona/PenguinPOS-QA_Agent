@@ -1,25 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/test_suite_model.dart';
 
-/// Card widget rendering individual scenario details, steps checkmarks, tags, and error traces.
+/// Read-only test definition card. Execution state belongs exclusively to the
+/// Output tab, so instructions cannot be accidentally presented as results.
 class ScenarioCard extends StatelessWidget {
   const ScenarioCard({
     super.key,
     required this.scenario,
     required this.isExpanded,
-    required this.isPassed,
-    required this.isFailed,
-    required this.wasAppClosedByUser,
-    required this.lastExecutionDetails,
     required this.onToggleExpand,
   });
 
   final TestSuiteScenario scenario;
   final bool isExpanded;
-  final bool isPassed;
-  final bool isFailed;
-  final bool wasAppClosedByUser;
-  final String? lastExecutionDetails;
   final VoidCallback onToggleExpand;
 
   @override
@@ -29,12 +22,7 @@ class ScenarioCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isPassed
-              ? const Color(0xFF86EFAC)
-              : (isFailed ? const Color(0xFFFCA5A5) : const Color(0xFFE2E8F0)),
-          width: isPassed || isFailed ? 1.5 : 1.0,
-        ),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -47,17 +35,9 @@ class ScenarioCard extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(
                 children: <Widget>[
-                  Icon(
-                    isPassed
-                        ? Icons.check_circle_outline_rounded
-                        : (isFailed
-                              ? Icons.cancel_outlined
-                              : Icons.radio_button_unchecked_rounded),
-                    color: isPassed
-                        ? const Color(0xFF16A34A)
-                        : (isFailed
-                              ? const Color(0xFFDC2626)
-                              : const Color(0xFF94A3B8)),
+                  const Icon(
+                    Icons.menu_book_outlined,
+                    color: Color(0xFF64748B),
                     size: 22,
                   ),
                   const SizedBox(width: 12),
@@ -71,26 +51,6 @@ class ScenarioCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (wasAppClosedByUser && !isPassed)
-                    Container(
-                      margin: const EdgeInsets.only(right: 6),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF7ED),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        'Pending',
-                        style: TextStyle(
-                          color: Color(0xFFB45309),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
                   if (scenario.tags.isNotEmpty)
                     Row(
                       children: scenario.tags.map((tag) {
@@ -135,12 +95,7 @@ class ScenarioCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  ...scenario.stepsDescription.asMap().entries.map((entry) {
-                    final stepIdx = entry.key;
-                    final stepText = entry.value;
-                    final isLastStep =
-                        stepIdx == scenario.stepsDescription.length - 1;
-
+                  ...scenario.stepsDescription.map((stepText) {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Column(
@@ -149,61 +104,23 @@ class ScenarioCard extends StatelessWidget {
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
-                              Icon(
-                                isPassed
-                                    ? Icons.check_circle_outline
-                                    : (isFailed && isLastStep
-                                          ? Icons.error_outline_rounded
-                                          : Icons
-                                                .radio_button_unchecked_rounded),
+                              const Icon(
+                                Icons.radio_button_unchecked_rounded,
                                 size: 16,
-                                color: isPassed
-                                    ? const Color(0xFF16A34A)
-                                    : (isFailed && isLastStep
-                                          ? const Color(0xFFDC2626)
-                                          : const Color(0xFF94A3B8)),
+                                color: Color(0xFF94A3B8),
                               ),
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
                                   stepText,
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                     fontSize: 13,
-                                    fontWeight: isFailed && isLastStep
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                    color: isFailed && isLastStep
-                                        ? const Color(0xFF991B1B)
-                                        : const Color(0xFF334155),
+                                    color: Color(0xFF334155),
                                   ),
                                 ),
                               ),
                             ],
                           ),
-                          if (isFailed && isLastStep) ...<Widget>[
-                            Container(
-                              width: double.infinity,
-                              margin: const EdgeInsets.only(left: 26, top: 4),
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFEF2F2),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: const Color(0xFFFCA5A5),
-                                ),
-                              ),
-                              child: Text(
-                                lastExecutionDetails ??
-                                    'Error: Order & payment step execution failed.',
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 11,
-                                  color: Color(0xFFB91C1C),
-                                  height: 1.4,
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
                     );
