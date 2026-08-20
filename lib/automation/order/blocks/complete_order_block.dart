@@ -118,10 +118,7 @@ class CompleteOrderBlock implements AutomationBlock {
     state.stepMetrics.add(
       OrderStepMetric(
         stepName: 'Order Success Screen Wrap-Up',
-        uiRenderTimeMs: DateTime.now()
-            .difference(successStart)
-            .inMilliseconds
-            .clamp(140, 320),
+        uiRenderTimeMs: DateTime.now().difference(successStart).inMilliseconds,
       ),
     );
   }

@@ -67,6 +67,9 @@ class OrderExecutionConfiguration {
       if (item.skuCode.trim().isEmpty) {
         issues.add('Each order item needs an SKU code.');
       }
+      if (item.quantity < 1) {
+        issues.add('Each order item needs a quantity of at least 1.');
+      }
       if (item.isWeighed && (item.weight == null || item.weight! <= 0)) {
         issues.add('Weighed SKU ${item.skuCode} needs a positive weight.');
       }

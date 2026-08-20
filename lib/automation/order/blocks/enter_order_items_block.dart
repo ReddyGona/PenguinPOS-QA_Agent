@@ -38,51 +38,53 @@ class EnterOrderItemsBlock implements AutomationBlock {
     for (final item in itemsToPunch) {
       if (item.skuCode.trim().isEmpty) continue;
 
-      final effectiveType = item.effectiveType;
-      final effectiveMode = item.effectiveEntryMode;
+      for (var entry = 0; entry < item.quantity; entry++) {
+        final effectiveType = item.effectiveType;
+        final effectiveMode = item.effectiveEntryMode;
 
-      if (effectiveMode == ItemEntryMode.manualNumpad) {
-        final digits = item.skuCode.trim().replaceAll(RegExp(r'[^\d]'), '');
-        for (final digit in digits.split('')) {
-          final key = PenguinPosOrderKeys.orderNumPadDigit(digit);
-          await driver.tap(key);
+        if (effectiveMode == ItemEntryMode.manualNumpad) {
+          final digits = item.skuCode.trim().replaceAll(RegExp(r'[^\d]'), '');
+          for (final digit in digits.split('')) {
+            final key = PenguinPosOrderKeys.orderNumPadDigit(digit);
+            await driver.tap(key);
+          }
+          await driver.tap(PenguinPosOrderKeys.orderNumPadEnter);
+        } else if (effectiveMode == ItemEntryMode.manualQwerty) {
+          await driver.tap(PenguinPosOrderKeys.orderKeyboardToggle);
+          await driver.waitFor(
+            PenguinPosOrderKeys.orderQwertyKey('a'),
+            timeout: timeout,
+          );
+          await driver.enterTextViaVirtualKeyboard(
+            PenguinPosOrderKeys.orderInputCode,
+            item.skuCode.trim(),
+            keyPrefix: 'order.qwerty',
+            mode: TextInputMode.customQwertyPad,
+          );
+          await driver.tap(PenguinPosOrderKeys.orderQwertyEnter);
+        } else {
+          await driver.enterText(
+            PenguinPosOrderKeys.orderInputCode,
+            item.skuCode.trim(),
+          );
+          await driver.tap(PenguinPosOrderKeys.orderNumPadEnter);
         }
-        await driver.tap(PenguinPosOrderKeys.orderNumPadEnter);
-      } else if (effectiveMode == ItemEntryMode.manualQwerty) {
-        await driver.tap(PenguinPosOrderKeys.orderKeyboardToggle);
-        await driver.waitFor(
-          PenguinPosOrderKeys.orderQwertyKey('a'),
-          timeout: timeout,
-        );
-        await driver.enterTextViaVirtualKeyboard(
-          PenguinPosOrderKeys.orderInputCode,
-          item.skuCode.trim(),
-          keyPrefix: 'order.qwerty',
-          mode: TextInputMode.customQwertyPad,
-        );
-        await driver.tap(PenguinPosOrderKeys.orderQwertyEnter);
-      } else {
-        await driver.enterText(
-          PenguinPosOrderKeys.orderInputCode,
-          item.skuCode.trim(),
-        );
-        await driver.tap(PenguinPosOrderKeys.orderNumPadEnter);
-      }
 
-      if (effectiveType == SkuItemType.weighed && item.weight != null) {
-        await driver.waitFor(
-          PenguinPosOrderKeys.orderInputWeight,
-          timeout: timeout,
-        );
-        final weightStr = item.weight.toString();
-        for (final digit in weightStr.split('')) {
-          final key = PenguinPosOrderKeys.orderNumPadDigit(digit);
-          await driver.tap(key);
+        if (effectiveType == SkuItemType.weighed && item.weight != null) {
+          await driver.waitFor(
+            PenguinPosOrderKeys.orderInputWeight,
+            timeout: timeout,
+          );
+          final weightStr = item.weight.toString();
+          for (final digit in weightStr.split('')) {
+            final key = PenguinPosOrderKeys.orderNumPadDigit(digit);
+            await driver.tap(key);
+          }
+          await driver.tap(PenguinPosOrderKeys.orderNumPadEnter);
         }
-        await driver.tap(PenguinPosOrderKeys.orderNumPadEnter);
-      }
 
-      itemsThisOrder++;
+        itemsThisOrder++;
+      }
     }
 
     state.itemsThisOrder = itemsThisOrder;
@@ -95,15 +97,7 @@ class EnterOrderItemsBlock implements AutomationBlock {
     state.stepMetrics.add(
       OrderStepMetric(
         stepName: 'SKU & Weight Item Scanning',
-        uiRenderTimeMs: DateTime.now()
-            .difference(skuScanStart)
-            .inMilliseconds
-            .clamp(180, 450),
-        apiTelemetry: const OrderApiTelemetry(
-          endpoint: 'POST /api/v1/orders/scan',
-          statusCode: 200,
-          responseTimeMs: 45,
-        ),
+        uiRenderTimeMs: DateTime.now().difference(skuScanStart).inMilliseconds,
       ),
     );
   }

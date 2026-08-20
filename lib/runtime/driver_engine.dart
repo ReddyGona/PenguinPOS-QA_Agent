@@ -1,29 +1,200 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
-import 'package:flutter_driver/flutter_driver.dart';
 import 'dart:convert';
-import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
-import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
-import 'package:penguin_pos_qa_agent/automation/core/pos_automation_contract.dart';
+import 'dart:developer' as developer;
+import 'dart:io';
 
-/// Reusable wrapper for FlutterDriver connection, key, and text finder UI interactions.
+import 'package:penguin_pos_qa_agent/automation/core/driver.dart';
+import 'package:penguin_pos_qa_agent/automation/core/pos_automation_contract.dart';
+import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
+
+void _log(String message) {
+  developer.log(message, name: 'DriverEngine');
+}
+
+/// Pure Dart WebSocket client for the Flutter Driver VM Service extension.
+///
+/// Communicates directly via the `ext.flutter.driver` JSON-RPC protocol over
+/// `dart:io` WebSocket, eliminating any dependency on `dart:ui` or the Flutter SDK
+/// runtime on the host machine.
 class DriverEngine implements Driver {
-  FlutterDriver? _driver;
+  WebSocket? _ws;
+  StreamSubscription<dynamic>? _wsSubscription;
+  int _nextId = 1;
+  final Map<String, Completer<Map<String, Object?>>> _pendingRequests =
+      <String, Completer<Map<String, Object?>>>{};
   Timer? _qaNoticeDismissTimer;
 
+  bool get isConnected => _ws != null;
+
+  String? _mainIsolateId;
+
   @override
-  Future<FlutterDriver> connect(
+  Future<void> connect(
     Uri vmServiceUri, {
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    _driver = await FlutterDriver.connect(
-      dartVmServiceUrl: vmServiceUri.toString(),
-      timeout: timeout,
-      // Driver command transcripts include text-entry payloads. Disable them
-      // because credentials and PINs are runtime-only secrets.
-      logCommunicationToFile: false,
+    await close();
+
+    final wsUri = _normalizeWsUri(vmServiceUri);
+    _log('Connecting to VM Service WebSocket: $wsUri');
+
+    final ws = await WebSocket.connect(wsUri.toString()).timeout(
+      timeout,
+      onTimeout: () => throw TimeoutException(
+        'Timed out connecting to VM Service at $wsUri',
+        timeout,
+      ),
     );
-    return _driver!;
+
+    _ws = ws;
+    _wsSubscription = ws.listen(
+      _handleIncomingMessage,
+      onError: (Object error) {
+        _log('WebSocket error: $error');
+        _failPendingRequests('WebSocket error: $error');
+      },
+      onDone: () {
+        _log('WebSocket connection closed');
+        _failPendingRequests('WebSocket connection closed');
+      },
+    );
+
+    // Discover UI isolate from target VM Service
+    try {
+      final vmResponse = await _sendRpc(
+        'getVM',
+        <String, Object?>{},
+        timeout: const Duration(seconds: 10),
+      );
+      final isolates = vmResponse['isolates'];
+      if (isolates is List && isolates.isNotEmpty) {
+        final firstIsolate = isolates.first;
+        if (firstIsolate is Map) {
+          _mainIsolateId = firstIsolate['id']?.toString();
+          _log('Discovered main isolate ID: $_mainIsolateId');
+        }
+      }
+    } catch (e) {
+      _log('Warning: Unable to query getVM for isolate ID: $e');
+    }
+  }
+
+  Uri _normalizeWsUri(Uri uri) {
+    var scheme = uri.scheme;
+    if (scheme == 'http') scheme = 'ws';
+    if (scheme == 'https') scheme = 'wss';
+    if (scheme.isEmpty) scheme = 'ws';
+
+    var path = uri.path;
+    if (!path.endsWith('/ws')) {
+      if (path.endsWith('/')) {
+        path = '${path}ws';
+      } else {
+        path = '$path/ws';
+      }
+    }
+    return uri.replace(scheme: scheme, path: path);
+  }
+
+  void _handleIncomingMessage(dynamic data) {
+    if (data is! String) return;
+    try {
+      final decoded = jsonDecode(data);
+      if (decoded is! Map) return;
+      final map = Map<String, Object?>.from(decoded);
+      final id = map['id']?.toString();
+      if (id != null && _pendingRequests.containsKey(id)) {
+        _pendingRequests.remove(id)?.complete(map);
+      }
+    } catch (e) {
+      _log('Failed to parse incoming WebSocket message: $e');
+    }
+  }
+
+  void _failPendingRequests(String reason) {
+    final pending = Map<String, Completer<Map<String, Object?>>>.from(
+      _pendingRequests,
+    );
+    _pendingRequests.clear();
+    for (final completer in pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError(reason));
+      }
+    }
+  }
+
+  Future<Map<String, Object?>> _sendRpc(
+    String method,
+    Map<String, Object?> params, {
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    final ws = _ws;
+    if (ws == null) {
+      throw StateError('Driver is not connected to target VM Service');
+    }
+
+    final id = (_nextId++).toString();
+    final completer = Completer<Map<String, Object?>>();
+    _pendingRequests[id] = completer;
+
+    final requestPayload = jsonEncode(<String, Object?>{
+      'jsonrpc': '2.0',
+      'id': id,
+      'method': method,
+      'params': params,
+    });
+
+    ws.add(requestPayload);
+
+    try {
+      final response = await completer.future.timeout(
+        timeout,
+        onTimeout: () {
+          _pendingRequests.remove(id);
+          throw TimeoutException(
+            'Timed out waiting for RPC response ($method)',
+            timeout,
+          );
+        },
+      );
+
+      if (response.containsKey('error')) {
+        final err = response['error'];
+        throw StateError('Driver RPC error: $err');
+      }
+
+      final result = response['result'];
+      if (result is Map) {
+        final resultMap = Map<String, Object?>.from(result);
+        final responseData = resultMap['response'];
+        if (responseData is Map) {
+          final resMap = Map<String, Object?>.from(responseData);
+          if (resMap['isError'] == true) {
+            throw StateError(
+              'FlutterDriver command error: ${resMap['response'] ?? resMap['message']}',
+            );
+          }
+        }
+        return resultMap;
+      }
+      return <String, Object?>{};
+    } catch (e) {
+      _pendingRequests.remove(id);
+      rethrow;
+    }
+  }
+
+  Future<Map<String, Object?>> _sendDriverCommand(
+    String command,
+    Map<String, Object?> params, {
+    Duration timeout = const Duration(seconds: 45),
+  }) {
+    return _sendRpc('ext.flutter.driver', <String, Object?>{
+      if (_mainIsolateId != null) 'isolateId': _mainIsolateId,
+      'command': command,
+      'timeout': timeout.inMilliseconds.toString(),
+      ...params,
+    }, timeout: timeout);
   }
 
   @override
@@ -31,15 +202,12 @@ class DriverEngine implements Driver {
     String key, {
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-
     final deadline = DateTime.now().add(timeout);
     const probeTimeout = Duration(milliseconds: 500);
     var probeCount = 0;
 
-    debugPrint('[DriverEngine] waitFor("$key") started, timeout=$timeout');
-    while (_driver != null && DateTime.now().isBefore(deadline)) {
+    _log('[DriverEngine] waitFor("$key") started, timeout=$timeout');
+    while (_ws != null && DateTime.now().isBefore(deadline)) {
       final remaining = deadline.difference(DateTime.now());
       if (remaining <= Duration.zero) break;
 
@@ -49,16 +217,12 @@ class DriverEngine implements Driver {
         timeout: remaining < probeTimeout ? remaining : probeTimeout,
       );
       if (found) {
-        debugPrint(
-          '[DriverEngine] waitFor("$key") FOUND after $probeCount probes',
-        );
+        _log('[DriverEngine] waitFor("$key") FOUND after $probeCount probes');
         return;
       }
     }
 
-    debugPrint(
-      '[DriverEngine] waitFor("$key") TIMEOUT after $probeCount probes',
-    );
+    _log('[DriverEngine] waitFor("$key") TIMEOUT after $probeCount probes');
     throw TimeoutException('Timed out waiting for key "$key".', timeout);
   }
 
@@ -67,16 +231,11 @@ class DriverEngine implements Driver {
     String key, {
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-
     final deadline = DateTime.now().add(timeout);
     const probeTimeout = Duration(milliseconds: 250);
 
-    debugPrint(
-      '[DriverEngine] waitForAbsent("$key") started, timeout=$timeout',
-    );
-    while (_driver != null && DateTime.now().isBefore(deadline)) {
+    _log('[DriverEngine] waitForAbsent("$key") started, timeout=$timeout');
+    while (_ws != null && DateTime.now().isBefore(deadline)) {
       final remaining = deadline.difference(DateTime.now());
       if (remaining <= Duration.zero) break;
 
@@ -85,25 +244,18 @@ class DriverEngine implements Driver {
         timeout: remaining < probeTimeout ? remaining : probeTimeout,
       );
       if (!exists) {
-        debugPrint(
-          '[DriverEngine] waitForAbsent("$key") CLEARED (widget absent)',
-        );
+        _log('[DriverEngine] waitForAbsent("$key") CLEARED (widget absent)');
         return;
       }
     }
 
-    debugPrint('[DriverEngine] waitForAbsent("$key") TIMEOUT');
+    _log('[DriverEngine] waitForAbsent("$key") TIMEOUT');
     throw TimeoutException(
       'Timed out waiting for key "$key" to disappear.',
       timeout,
     );
   }
 
-  /// Waits until one of [keys] appears and returns the matching key.
-  ///
-  /// Flutter Driver cannot wait for an OR finder, so this performs short,
-  /// bounded probes. The target application's widget state, rather than a
-  /// fixed startup delay, determines when the caller proceeds.
   @override
   Future<String> waitForAnyKey(
     Iterable<String> keys, {
@@ -118,11 +270,10 @@ class DriverEngine implements Driver {
     const probeTimeout = Duration(milliseconds: 250);
     var cycleCount = 0;
 
-    debugPrint(
-      '[DriverEngine] waitForAnyKey(${candidates.join(", ")}) '
-      'started, timeout=$timeout',
+    _log(
+      '[DriverEngine] waitForAnyKey(${candidates.join(", ")}) started, timeout=$timeout',
     );
-    while (_driver != null && DateTime.now().isBefore(deadline)) {
+    while (_ws != null && DateTime.now().isBefore(deadline)) {
       cycleCount++;
       for (final key in candidates) {
         final remaining = deadline.difference(DateTime.now());
@@ -132,18 +283,16 @@ class DriverEngine implements Driver {
           timeout: remaining < probeTimeout ? remaining : probeTimeout,
         );
         if (keyFound) {
-          debugPrint(
-            '[DriverEngine] waitForAnyKey FOUND "$key" '
-            'on cycle #$cycleCount',
+          _log(
+            '[DriverEngine] waitForAnyKey FOUND "$key" on cycle #$cycleCount',
           );
           return key;
         }
       }
     }
 
-    debugPrint(
-      '[DriverEngine] waitForAnyKey TIMEOUT after $cycleCount cycles. '
-      'Keys: ${candidates.join(", ")}',
+    _log(
+      '[DriverEngine] waitForAnyKey TIMEOUT after $cycleCount cycles. Keys: ${candidates.join(", ")}',
     );
     throw TimeoutException(
       'Timed out waiting for one of: ${candidates.join(', ')}.',
@@ -156,9 +305,10 @@ class DriverEngine implements Driver {
     String text, {
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-    await driver.waitFor(find.text(text), timeout: timeout);
+    await _sendDriverCommand('waitFor', <String, Object?>{
+      'finderType': 'ByText',
+      'text': text,
+    }, timeout: timeout);
   }
 
   @override
@@ -166,10 +316,13 @@ class DriverEngine implements Driver {
     String key, {
     Duration timeout = const Duration(seconds: 2),
   }) async {
-    final driver = _driver;
-    if (driver == null) return false;
+    if (_ws == null) return false;
     try {
-      await driver.waitFor(find.byValueKey(key), timeout: timeout);
+      await _sendDriverCommand('waitFor', <String, Object?>{
+        'finderType': 'ByValueKey',
+        'keyValueString': key,
+        'keyValueType': 'String',
+      }, timeout: timeout);
       return true;
     } catch (_) {
       return false;
@@ -181,10 +334,12 @@ class DriverEngine implements Driver {
     String text, {
     Duration timeout = const Duration(seconds: 2),
   }) async {
-    final driver = _driver;
-    if (driver == null) return false;
+    if (_ws == null) return false;
     try {
-      await driver.waitFor(find.text(text), timeout: timeout);
+      await _sendDriverCommand('waitFor', <String, Object?>{
+        'finderType': 'ByText',
+        'text': text,
+      }, timeout: timeout);
       return true;
     } catch (_) {
       return false;
@@ -197,11 +352,11 @@ class DriverEngine implements Driver {
     String text, {
     Duration timeout = const Duration(seconds: 2),
   }) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-    debugPrint('[DriverEngine] enterText("$key", ${text.length} chars)');
-    await driver.tap(find.byValueKey(key), timeout: timeout);
-    await driver.enterText(text, timeout: timeout);
+    _log('[DriverEngine] enterText("$key", ${text.length} chars)');
+    await tap(key);
+    await _sendDriverCommand('enter_text', <String, Object?>{
+      'text': text,
+    }, timeout: timeout);
   }
 
   @override
@@ -211,19 +366,13 @@ class DriverEngine implements Driver {
     String keyPrefix = 'login.qwerty',
     TextInputMode mode = TextInputMode.driverDirect,
   }) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-
     if (mode == TextInputMode.driverDirect) {
       await enterText(targetInputKey, text);
       return;
     }
 
-    // 1. Focus target input field for custom virtual keyboards
     await tap(targetInputKey);
-
-    // Clear existing text field content before virtual key entry
-    await driver.enterText('');
+    await _sendDriverCommand('enter_text', <String, Object?>{'text': ''});
 
     var isShiftActive = false;
 
@@ -231,7 +380,6 @@ class DriverEngine implements Driver {
       final char = text[i];
 
       if (mode == TextInputMode.customQwertyPad) {
-        // Validate character compatibility
         if (!RegExp(r'^[a-zA-Z0-9.,_/# ]$').hasMatch(char)) {
           throw UnsupportedKeyboardCharacterException(
             position: i + 1,
@@ -268,7 +416,6 @@ class DriverEngine implements Driver {
       }
     }
 
-    // Ensure shift state is left off
     if (isShiftActive) {
       await tap(PosAutomationContract.qwertyShift(keyPrefix));
     }
@@ -279,49 +426,48 @@ class DriverEngine implements Driver {
     String key, {
     Duration timeout = const Duration(seconds: 3),
   }) async {
-    final driver = _driver;
-    if (driver == null) return null;
+    if (_ws == null) return null;
     try {
-      await driver.waitFor(find.byValueKey(key), timeout: timeout);
-      return await driver.getText(find.byValueKey(key), timeout: timeout);
+      return await getText(key, timeout: timeout);
     } catch (_) {
       return null;
     }
   }
 
-  /// Reads text from a keyed Text, RichText, or editable field.
-  ///
-  /// Unlike [tryGetText], this preserves driver errors so a required test
-  /// value cannot silently become a default value.
   @override
   Future<String> getText(
     String key, {
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-    await driver.waitFor(find.byValueKey(key), timeout: timeout);
-    return driver.getText(find.byValueKey(key), timeout: timeout);
-  }
+    final result = await _sendDriverCommand('get_text', <String, Object?>{
+      'finderType': 'ByValueKey',
+      'keyValueString': key,
+      'keyValueType': 'String',
+    }, timeout: timeout);
 
-  Future<void> enterTextDirect(String text) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-    await driver.enterText(text);
+    final response = result['response'];
+    if (response is Map) {
+      final text = response['text'] ?? response['response'];
+      return text?.toString() ?? '';
+    }
+    return '';
   }
 
   @override
   Future<void> tap(String key) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-    await driver.tap(find.byValueKey(key));
+    await _sendDriverCommand('tap', <String, Object?>{
+      'finderType': 'ByValueKey',
+      'keyValueString': key,
+      'keyValueType': 'String',
+    });
   }
 
   @override
   Future<void> tapText(String text) async {
-    final driver = _driver;
-    if (driver == null) throw StateError('Driver is not connected');
-    await driver.tap(find.text(text));
+    await _sendDriverCommand('tap', <String, Object?>{
+      'finderType': 'ByText',
+      'text': text,
+    });
   }
 
   @override
@@ -329,11 +475,9 @@ class DriverEngine implements Driver {
     String text, {
     Duration timeout = const Duration(seconds: 3),
   }) async {
-    final driver = _driver;
-    if (driver == null) return false;
+    if (_ws == null) return false;
     try {
-      await driver.waitFor(find.text(text), timeout: timeout);
-      await driver.tap(find.text(text));
+      await tapText(text);
       return true;
     } catch (_) {
       return false;
@@ -345,11 +489,9 @@ class DriverEngine implements Driver {
     String key, {
     Duration timeout = const Duration(seconds: 3),
   }) async {
-    final driver = _driver;
-    if (driver == null) return false;
+    if (_ws == null) return false;
     try {
-      await driver.waitFor(find.byValueKey(key), timeout: timeout);
-      await driver.tap(find.byValueKey(key));
+      await tap(key);
       return true;
     } catch (_) {
       return false;
@@ -361,17 +503,23 @@ class DriverEngine implements Driver {
     String message, {
     Duration timeout = const Duration(seconds: 5),
   }) async {
-    final driver = _driver;
-    if (driver == null) return null;
+    if (_ws == null) return null;
     final start = DateTime.now();
     try {
-      final res = await driver.requestData(message, timeout: timeout);
+      final result = await _sendDriverCommand('request_data', <String, Object?>{
+        'message': message,
+      }, timeout: timeout);
       final durationMs = DateTime.now().difference(start).inMilliseconds;
-      debugPrint('[DriverEngine] requestData completed in ${durationMs}ms');
-      return res;
+      _log('[DriverEngine] requestData completed in ${durationMs}ms');
+      final response = result['response'];
+      if (response is Map) {
+        final msg = response['message'] ?? response['response'];
+        return msg?.toString();
+      }
+      return null;
     } catch (_) {
       final durationMs = DateTime.now().difference(start).inMilliseconds;
-      debugPrint('[DriverEngine] requestData failed after ${durationMs}ms');
+      _log('[DriverEngine] requestData failed after ${durationMs}ms');
       return null;
     }
   }
@@ -381,7 +529,7 @@ class DriverEngine implements Driver {
     final res = await requestData('clear_snackbars');
     final isAcknowledged = res == 'cleared' || res == 'snackbars_cleared';
     if (!isAcknowledged) {
-      debugPrint(
+      _log(
         '[DriverEngine] clearSnackBars unacknowledged or extension unsupported (status="${res == null
             ? 'null'
             : res.contains('No requestData')
@@ -397,22 +545,16 @@ class DriverEngine implements Driver {
     _qaNoticeDismissTimer?.cancel();
     final response = await requestData(
       jsonEncode(notice.toJson()),
-      // A notice must never consume the automation step timeout when the
-      // optional target extension is unavailable.
       timeout: const Duration(milliseconds: 700),
     );
     final acknowledged = response == 'shown' || response == 'notice_shown';
     if (acknowledged) {
-      // Notices are progress affordances, not modal gates. Never let one
-      // prevent the next automation decision from reaching the target UI.
       _qaNoticeDismissTimer = Timer(const Duration(milliseconds: 700), () {
         unawaited(clearQaTestNotice());
       });
     }
     if (!acknowledged) {
-      debugPrint(
-        '[DriverEngine] QA notice unacknowledged or extension unsupported',
-      );
+      _log('[DriverEngine] QA notice unacknowledged or extension unsupported');
     }
     return acknowledged;
   }
@@ -427,7 +569,7 @@ class DriverEngine implements Driver {
     );
     final acknowledged = response == 'cleared' || response == 'notice_cleared';
     if (!acknowledged) {
-      debugPrint(
+      _log(
         '[DriverEngine] QA notice clear unacknowledged or extension unsupported',
       );
     }
@@ -438,13 +580,14 @@ class DriverEngine implements Driver {
   Future<void> close() async {
     _qaNoticeDismissTimer?.cancel();
     _qaNoticeDismissTimer = null;
-    // Invalidate the handle before awaiting FlutterDriver.close(). Any active
-    // polling loop will then stop on its next bounded probe instead of
-    // waiting for the full scenario timeout after PenguinPOS quits.
-    final driver = _driver;
-    _driver = null;
+    _failPendingRequests('Driver closed');
+    final sub = _wsSubscription;
+    _wsSubscription = null;
+    await sub?.cancel();
+    final ws = _ws;
+    _ws = null;
     try {
-      await driver?.close();
+      await ws?.close();
     } catch (_) {}
   }
 }

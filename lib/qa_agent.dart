@@ -21,6 +21,3 @@ export 'interfaces/mcp/mcp_server.dart';
 export 'interfaces/mcp/mcp_tool_definition.dart';
 export 'interfaces/mcp/mcp_tool_result.dart';
 export 'interfaces/mcp/tools/login_mcp_tool.dart';
-
-// ── Interfaces: Desktop GUI App ──────────────────────────────────────────────
-export 'interfaces/gui/qa_agent_dashboard.dart';

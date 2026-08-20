@@ -40,7 +40,7 @@ class PenguinPosAppLauncher {
       mode: ProcessStartMode.normal,
     );
     final serviceUri = await _waitForVmServiceUri(process);
-    return LaunchedPenguinPos(process: process, vmServiceUri: serviceUri);
+    return LocalLaunchedPenguinPos(process: process, vmServiceUri: serviceUri);
   }
 
   Future<Uri> _waitForVmServiceUri(Process process) async {
@@ -100,13 +100,26 @@ class PenguinPosAppLauncher {
   }
 }
 
-/// Represents a running instance of PenguinPOS launched for QA automation.
-class LaunchedPenguinPos {
-  const LaunchedPenguinPos({required this.process, required this.vmServiceUri});
+/// Abstract lifecycle handle for a running PenguinPOS instance.
+/// Consumers use only [vmServiceUri] and [close]. The transport is invisible.
+abstract class LaunchedPenguinPos {
+  Uri get vmServiceUri;
+  Future<void> close();
+}
+
+/// Represents a locally-launched instance of PenguinPOS.
+class LocalLaunchedPenguinPos implements LaunchedPenguinPos {
+  const LocalLaunchedPenguinPos({
+    required this.process,
+    required this.vmServiceUri,
+  });
 
   final Process process;
+
+  @override
   final Uri vmServiceUri;
 
+  @override
   Future<void> close() async {
     try {
       process.kill(ProcessSignal.sigint);

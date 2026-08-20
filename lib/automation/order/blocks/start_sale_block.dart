@@ -50,8 +50,7 @@ class StartSaleBlock implements AutomationBlock {
         stepName: 'Start Sale & Customer Selection',
         uiRenderTimeMs: DateTime.now()
             .difference(startSaleStart)
-            .inMilliseconds
-            .clamp(120, 350),
+            .inMilliseconds,
       ),
     );
 

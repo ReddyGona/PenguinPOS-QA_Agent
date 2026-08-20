@@ -1,0 +1,24 @@
+#!/bin/bash
+# PenguinPOS QA Agent CLI Runner
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+if [ $# -eq 0 ]; then
+  echo "PenguinPOS QA Agent CLI"
+  echo ""
+  echo "Usage:"
+  echo "  ./qa_agent <command> [options]"
+  echo ""
+  echo "Commands:"
+  echo "  login    Automate login verification, validation checks, and terminal selection."
+  echo "  order    Automate start sale, SKU item scanning, cart sync, and cash checkout."
+  echo ""
+  echo "Examples:"
+  echo "  ./qa_agent login --profile kpn-dev --login-id \"6666666666\" --password \"password\""
+  echo "  ./qa_agent order --profile kpn-dev --orders-count 2 --items '[{\"skuCode\":\"10000021\",\"quantity\":1}]'"
+  exit 0
+fi
+
+# Pass all CLI arguments into the headless Flutter runner
+flutter test test/interfaces/cli/cli_runner_test.dart --plain-name "Execute CLI via Flutter Test Runner" --dart-define=ARGS="$*"

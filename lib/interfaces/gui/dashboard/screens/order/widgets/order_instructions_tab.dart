@@ -30,8 +30,6 @@ class OrderInstructionsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasRun = lastExecutionPassed != null || wasAppClosedByUser;
-
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       child: Column(
@@ -72,28 +70,9 @@ class OrderInstructionsTab extends StatelessWidget {
               final scenario = suite.scenarios[index];
               final isExpanded = expandedMap[scenario.id] ?? false;
 
-              final isPassed =
-                  hasRun &&
-                  (lastExecutionPassed == true ||
-                      scenariosCompleted.contains(scenario.name) ||
-                      scenariosCompleted.contains(scenario.id));
-
-              final isFailed =
-                  hasRun &&
-                  !isPassed &&
-                  !wasAppClosedByUser &&
-                  lastExecutionPassed == false &&
-                  (scenariosCompleted.length == index ||
-                      (!scenariosCompleted.contains(scenario.name) &&
-                          !scenariosCompleted.contains(scenario.id)));
-
               return ScenarioCard(
                 scenario: scenario,
                 isExpanded: isExpanded,
-                isPassed: isPassed,
-                isFailed: isFailed,
-                wasAppClosedByUser: wasAppClosedByUser,
-                lastExecutionDetails: lastExecutionDetails,
                 onToggleExpand: () => onToggleExpandScenario(scenario.id),
               );
             },

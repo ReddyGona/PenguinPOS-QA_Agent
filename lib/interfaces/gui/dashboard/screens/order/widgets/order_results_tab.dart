@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_metrics.dart';
 import 'package:penguin_pos_qa_agent/automation/order/order_runner.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/model/qa_dashboard_models.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/live_execution_timeline.dart';
 
 /// Output & Execution Results Tab Widget for Order Suite runs.
 class OrderResultsTab extends StatelessWidget {
@@ -9,43 +11,18 @@ class OrderResultsTab extends StatelessWidget {
     required this.result,
     required this.lastExecutionPassed,
     required this.lastExecutionDetails,
+    required this.liveMessages,
   });
 
   final OrderRunResult? result;
   final bool? lastExecutionPassed;
   final String? lastExecutionDetails;
+  final List<QaActivityMessage> liveMessages;
 
   @override
   Widget build(BuildContext context) {
     if (result == null && lastExecutionPassed == null) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(32),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
-        child: Column(
-          children: const <Widget>[
-            Icon(Icons.analytics_outlined, size: 48, color: Color(0xFF94A3B8)),
-            SizedBox(height: 12),
-            Text(
-              'No Execution Results Yet',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-                color: Color(0xFF334155),
-              ),
-            ),
-            SizedBox(height: 4),
-            Text(
-              'Run the Order Suite to view per-iteration loop stats, step UI render times & API telemetry.',
-              style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
-            ),
-          ],
-        ),
-      );
+      return LiveExecutionTimeline(messages: liveMessages, running: false);
     }
 
     final loops = result?.loopMetrics ?? const <OrderLoopMetrics>[];
@@ -136,6 +113,23 @@ class OrderResultsTab extends StatelessWidget {
 
           // Loop Cards List
           ...loops.map((loop) => _buildLoopMetricsCard(loop)),
+          const SizedBox(height: 4),
+          const Text(
+            'Run timeline',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 280,
+            child: LiveExecutionTimeline(
+              messages: liveMessages,
+              running: false,
+            ),
+          ),
         ],
       ),
     );

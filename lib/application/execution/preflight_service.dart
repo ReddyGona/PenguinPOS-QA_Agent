@@ -23,11 +23,13 @@ class RuntimeReadiness {
     required this.localExecutionSupported,
     required this.appRootIsValid,
     required this.flutterExecutableIsValid,
+    this.sshTargetReachable,
   });
 
   final bool localExecutionSupported;
   final bool appRootIsValid;
   final bool flutterExecutableIsValid;
+  final bool? sshTargetReachable;
 }
 
 enum PreflightCheckKind {
@@ -195,13 +197,30 @@ class PreflightService {
     );
 
     final readiness = await _dependencies.checkRuntimeReadiness();
-    if (!readiness.localExecutionSupported) {
+    if (readiness.sshTargetReachable == false) {
       checks.add(
         const PreflightCheck(
           kind: PreflightCheckKind.runtime,
           status: PreflightCheckStatus.failed,
           message:
-              'Remote execution is not available yet. No application was launched.',
+              'The remote SSH target is not reachable or app path is invalid.',
+        ),
+      );
+    } else if (readiness.sshTargetReachable == true) {
+      checks.add(
+        const PreflightCheck(
+          kind: PreflightCheckKind.runtime,
+          status: PreflightCheckStatus.passed,
+          message: 'Confirmed remote SSH target is reachable and ready.',
+        ),
+      );
+    } else if (!readiness.localExecutionSupported) {
+      checks.add(
+        const PreflightCheck(
+          kind: PreflightCheckKind.runtime,
+          status: PreflightCheckStatus.failed,
+          message:
+              'Local execution is not supported on this platform. No application was launched.',
         ),
       );
     } else if (!readiness.appRootIsValid ||

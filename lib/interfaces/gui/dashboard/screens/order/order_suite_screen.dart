@@ -9,6 +9,7 @@ import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/widg
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/widgets/order_instructions_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/order/widgets/order_results_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/qa_panel.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/widgets/live_execution_timeline.dart';
 
 /// Screen dedicated to configuring SKU lists, orders count, and running Order & Cash Payment automation test suites.
 class OrderSuiteScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class OrderSuiteScreen extends StatefulWidget {
     required this.lastExecutionDetails,
     required this.wasAppClosedByUser,
     required this.scenariosCompleted,
+    required this.liveMessages,
     required this.orderScenario,
     this.lastOrderRunResult,
     required this.onUpdateScenario,
@@ -44,6 +46,7 @@ class OrderSuiteScreen extends StatefulWidget {
   final String? lastExecutionDetails;
   final bool wasAppClosedByUser;
   final List<String> scenariosCompleted;
+  final List<QaActivityMessage> liveMessages;
 
   final OrderScenario orderScenario;
   final OrderRunResult? lastOrderRunResult;
@@ -81,6 +84,9 @@ class _OrderSuiteScreenState extends State<OrderSuiteScreen>
   @override
   void didUpdateWidget(OrderSuiteScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.running && !oldWidget.running) {
+      _tabController.animateTo(2);
+    }
     if (widget.orderScenario != oldWidget.orderScenario) {
       _syncControllersFromScenario(widget.orderScenario);
     }
@@ -431,6 +437,7 @@ class _OrderSuiteScreenState extends State<OrderSuiteScreen>
               ),
               onPressed: () {
                 Navigator.pop(dialogCtx);
+                _tabController.animateTo(2);
                 widget.onRunSuite();
               },
               child: const Text('Proceed Batch'),
@@ -439,6 +446,7 @@ class _OrderSuiteScreenState extends State<OrderSuiteScreen>
         ),
       );
     } else {
+      _tabController.animateTo(2);
       widget.onRunSuite();
     }
   }
@@ -644,10 +652,17 @@ class _OrderSuiteScreenState extends State<OrderSuiteScreen>
                     onToggleExpandScenario: _toggleExpandScenario,
                   );
                 } else {
+                  if (widget.running) {
+                    return LiveExecutionTimeline(
+                      messages: widget.liveMessages,
+                      running: true,
+                    );
+                  }
                   return OrderResultsTab(
                     result: widget.lastOrderRunResult,
                     lastExecutionPassed: widget.lastExecutionPassed,
                     lastExecutionDetails: widget.lastExecutionDetails,
+                    liveMessages: widget.liveMessages,
                   );
                 }
               },

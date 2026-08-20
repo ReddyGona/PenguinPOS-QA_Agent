@@ -20,7 +20,6 @@ class QaActivityPanel extends StatelessWidget {
               itemBuilder: (context, index) {
                 final message = messages[messages.length - 1 - index];
                 final isLast = index == messages.length - 1;
-
                 final (color, iconData, nodeBg) = switch (message.kind) {
                   QaActivityKind.success => (
                     const Color(0xFF16A34A),
@@ -33,12 +32,8 @@ class QaActivityPanel extends StatelessWidget {
                     const Color(0xFFFEF2F2),
                   ),
                   QaActivityKind.info => (
-                    message.title.toLowerCase().contains('processing')
-                        ? const Color(0xFF2563EB)
-                        : const Color(0xFF2563EB),
-                    message.title.toLowerCase().contains('processing')
-                        ? Icons.sync_rounded
-                        : Icons.outlined_flag_rounded,
+                    const Color(0xFF2563EB),
+                    Icons.outlined_flag_rounded,
                     const Color(0xFFEFF6FF),
                   ),
                 };

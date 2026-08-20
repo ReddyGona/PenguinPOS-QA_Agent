@@ -11,8 +11,6 @@ dependencies:
   file_picker: ^11.0.3
   flutter:
     sdk: flutter
-  flutter_driver:
-    sdk: flutter
   http: ^1.5.0
   shared_preferences: ^2.5.4
   window_manager: ^0.5.1

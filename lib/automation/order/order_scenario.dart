@@ -87,6 +87,7 @@ class OrderItem {
 
   const OrderItem({
     required this.skuCode,
+    this.quantity = 1,
     this.type = SkuItemType.nonWeighed,
     this.weight,
     this.entryMode = ItemEntryMode.scan,
@@ -118,6 +119,12 @@ class OrderItem {
   }
 
   final String skuCode;
+
+  /// Number of times this SKU is entered during one order iteration.
+  ///
+  /// This remains part of the portable order payload so a JSON command can
+  /// faithfully represent a manual or AI-authored quantity selection.
+  final int quantity;
   final SkuItemType type;
   final double? weight;
   final ItemEntryMode entryMode;
@@ -165,6 +172,7 @@ class OrderItem {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'skuCode': skuCode,
+    'quantity': quantity,
     if (rowId.isNotEmpty) 'rowId': rowId,
     'type': effectiveType.name,
     'entryMode': effectiveEntryMode.name,
@@ -191,6 +199,7 @@ class OrderItem {
 
     return OrderItem(
       skuCode: rawSkuCode,
+      quantity: (json['quantity'] as num?)?.toInt() ?? 1,
       type: resolvedType,
       weight: (json['weight'] as num?)?.toDouble(),
       entryMode: parsedMode,
@@ -202,6 +211,7 @@ class OrderItem {
 
   OrderItem copyWith({
     String? skuCode,
+    int? quantity,
     SkuItemType? type,
     Object? weight = _weightSentinel,
     ItemEntryMode? entryMode,
@@ -218,6 +228,7 @@ class OrderItem {
 
     return OrderItem(
       skuCode: newSkuCode,
+      quantity: quantity ?? this.quantity,
       type: resolvedType,
       weight: resolvedWeight,
       entryMode: entryMode ?? this.entryMode,

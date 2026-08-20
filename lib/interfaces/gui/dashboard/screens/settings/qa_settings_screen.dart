@@ -5,12 +5,14 @@ import 'package:penguin_pos_qa_agent/ai/providers/openai_compatible_provider.dar
 import 'package:penguin_pos_qa_agent/automation/core/qa_test_notice.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_credential_vault.dart';
 import 'package:penguin_pos_qa_agent/domain/profiles/qa_profile.dart';
+import 'package:penguin_pos_qa_agent/domain/profiles/qa_ssh_config.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/repository/qa_target_preferences_repository.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/ai_models_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/credentials_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/profiles_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/qa_notices_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/settings_sidebar.dart';
+import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/ssh_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/support_settings_tab.dart';
 import 'package:penguin_pos_qa_agent/interfaces/gui/dashboard/screens/settings/widgets/system_paths_settings_tab.dart';
 
@@ -24,10 +26,14 @@ class QaSettingsScreen extends StatefulWidget {
     required this.noticeDisplayMode,
     required this.flutterPath,
     required this.appRoot,
+    this.targetMode = QaTargetMode.local,
+    this.sshConfig,
     required this.onProfileSelected,
     required this.onProfilesUpdated,
     required this.onAiModelConfigUpdated,
     required this.onNoticeDisplayModeUpdated,
+    this.onTargetModeUpdated,
+    this.onSshConfigUpdated,
     required this.onClose,
   });
 
@@ -37,11 +43,15 @@ class QaSettingsScreen extends StatefulWidget {
   final QaTestNoticeDisplayMode noticeDisplayMode;
   final String flutterPath;
   final String appRoot;
+  final QaTargetMode targetMode;
+  final QaSshConfig? sshConfig;
 
   final ValueChanged<QaProfile> onProfileSelected;
   final ValueChanged<List<QaProfile>> onProfilesUpdated;
   final ValueChanged<AiModelConfig> onAiModelConfigUpdated;
   final ValueChanged<QaTestNoticeDisplayMode> onNoticeDisplayModeUpdated;
+  final ValueChanged<QaTargetMode>? onTargetModeUpdated;
+  final ValueChanged<QaSshConfig>? onSshConfigUpdated;
   final VoidCallback onClose;
 
   @override
@@ -82,6 +92,10 @@ class _QaSettingsScreenState extends State<QaSettingsScreen> {
   late String _flutterPath;
   late String _appRoot;
 
+  // SSH Remote state
+  late QaTargetMode _targetMode;
+  QaSshConfig? _sshConfig;
+
   @override
   void initState() {
     super.initState();
@@ -94,9 +108,22 @@ class _QaSettingsScreenState extends State<QaSettingsScreen> {
     _modelNameController.text = widget.aiModelConfig.model;
     _flutterPath = widget.flutterPath;
     _appRoot = widget.appRoot;
+    _targetMode = widget.targetMode;
+    _sshConfig = widget.sshConfig;
 
     _loadProfileCredentials(_selectedProfile);
     _loadApiKey();
+    _loadSshSettings();
+  }
+
+  Future<void> _loadSshSettings() async {
+    final savedMode = await _preferencesRepo.loadTargetMode();
+    final savedConfig = await _preferencesRepo.loadSshConfig();
+    if (!mounted) return;
+    setState(() {
+      _targetMode = savedMode;
+      _sshConfig = savedConfig;
+    });
   }
 
   @override
@@ -372,6 +399,20 @@ class _QaSettingsScreenState extends State<QaSettingsScreen> {
         _loadProfileCredentials(profile);
       },
       onSaveCredentials: _saveCredentials,
+    ),
+    SettingsTab.ssh => SshSettingsTab(
+      initialTargetMode: _targetMode,
+      initialConfig: _sshConfig,
+      onTargetModeChanged: (mode) {
+        setState(() => _targetMode = mode);
+        _preferencesRepo.saveTargetMode(mode);
+        widget.onTargetModeUpdated?.call(mode);
+      },
+      onConfigSaved: (config) {
+        setState(() => _sshConfig = config);
+        _preferencesRepo.saveSshConfig(config);
+        widget.onSshConfigUpdated?.call(config);
+      },
     ),
     SettingsTab.profiles => ProfilesSettingsTab(
       profiles: widget.profiles,
